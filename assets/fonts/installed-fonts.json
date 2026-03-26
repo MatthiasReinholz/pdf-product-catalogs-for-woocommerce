@@ -1,0 +1,8 @@
+{
+    "inter": {
+        "normal": "\/var\/www\/html\/cms\/plugins\/pdf-product-catalogs-for-woocommerce\/assets\/fonts\/\/inter_normal_e15001719b2563dcb307561c94021907",
+        "italic": "\/var\/www\/html\/cms\/plugins\/pdf-product-catalogs-for-woocommerce\/assets\/fonts\/\/inter_italic_81d8cd5e7fbcfd6522bb06687ab3edfd",
+        "600": "\/var\/www\/html\/cms\/plugins\/pdf-product-catalogs-for-woocommerce\/assets\/fonts\/\/inter_600_8de118af6c4dc3963c2ecaade9f9f3b6",
+        "bold": "inter_bold_aa3709194bb7647ab013e3ba1166a9ec"
+    }
+}

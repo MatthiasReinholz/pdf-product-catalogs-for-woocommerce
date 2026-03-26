@@ -13,22 +13,11 @@ require_once PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_DIR . 'vendor/dompdf-autoload.
 pdf_product_catalogs_for_woocommerce_register_vendor_autoloader();
 
 final class Pdf_Renderer {
-	/**
-	 * @param array<string,mixed> $document
-	 */
-	public static function render_to_path( array $document, string $output_path ): array {
-		if ( '' === $output_path ) {
+	public static function render_html_file( string $html_path ): array {
+		if ( '' === $html_path || ! file_exists( $html_path ) ) {
 			return array(
 				'ok'    => false,
-				'error' => 'missing-output-path',
-			);
-		}
-
-		$directory = dirname( $output_path );
-		if ( ! is_dir( $directory ) && ! wp_mkdir_p( $directory ) ) {
-			return array(
-				'ok'    => false,
-				'error' => 'mkdir-failed',
+				'error' => 'missing-html-file',
 			);
 		}
 
@@ -51,16 +40,11 @@ final class Pdf_Renderer {
 		$plugin_root = realpath( PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_DIR );
 		$dompdf_root = realpath( PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_DIR . 'vendor/dompdf/dompdf' );
 
-		ob_start();
-		$document_data = $document;
-		include PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_DIR . 'templates/catalog.php';
-		$html = (string) ob_get_clean();
-
 		$options = new Options();
 		$options->setIsRemoteEnabled( false );
 		$options->setIsHtml5ParserEnabled( true );
 		$options->setIsFontSubsettingEnabled( false );
-		$options->setDefaultFont( 'dejavu sans' );
+		$options->setDefaultFont( 'Inter' );
 		$options->setTempDir( $tmp_dir );
 		$options->setFontCache( $font_dir );
 		$options->setFontDir( $font_dir );
@@ -83,7 +67,7 @@ final class Pdf_Renderer {
 		}
 
 		$dompdf = new Dompdf( $options );
-		$dompdf->loadHtml( $html, 'UTF-8' );
+		$dompdf->loadHtmlFile( $html_path, 'UTF-8' );
 		$dompdf->setPaper( 'A4', 'portrait' );
 		$dompdf->render();
 
@@ -95,16 +79,9 @@ final class Pdf_Renderer {
 			);
 		}
 
-		if ( false === file_put_contents( $output_path, $pdf_binary ) ) {
-			return array(
-				'ok'    => false,
-				'error' => 'write-failed',
-			);
-		}
-
 		return array(
-			'ok'   => true,
-			'path' => $output_path,
+			'ok'     => true,
+			'binary' => $pdf_binary,
 		);
 	}
 }

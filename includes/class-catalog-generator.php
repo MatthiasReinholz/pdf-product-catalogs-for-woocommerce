@@ -4,14 +4,21 @@ namespace PdfProductCatalogsForWooCommerce;
 
 use WC_Product;
 use WC_Product_Variable;
-use WP_Query;
-use WP_Term;
+use WC_Product_Variation;
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
 final class Catalog_Generator {
+	private const PRODUCT_BATCH_SIZE = 100;
+	private const MAX_EMBEDDED_IMAGE_BYTES = 2097152;
+
+	/**
+	 * @var array<int,string>
+	 */
+	private static array $image_data_uri_cache = array();
+
 	/**
 	 * @param array<string,mixed> $request
 	 * @return array{ok:bool,record_id?:int,error?:string}
@@ -25,18 +32,21 @@ final class Catalog_Generator {
 
 		$record_id = Catalog_Repository::insert(
 			array(
-				'status'               => 'queued',
-				'client_name'          => isset( $request['client_name'] ) ? (string) $request['client_name'] : '',
-				'is_client_specific'   => 'client-specific' === ( $request['catalog_type'] ?? 'standard' ) ? 1 : 0,
-				'tax_mode'             => isset( $request['tax_mode'] ) ? (string) $request['tax_mode'] : 'including',
-				'discount_percent'     => isset( $request['discount_percent'] ) ? (float) $request['discount_percent'] : 0,
-				'include_out_of_stock' => ! empty( $settings['include_out_of_stock'] ) ? 1 : 0,
+				'status'                => 'queued',
+				'client_name'           => isset( $request['client_name'] ) ? (string) $request['client_name'] : '',
+				'is_client_specific'    => 'client-specific' === ( $request['catalog_type'] ?? 'standard' ) ? 1 : 0,
+				'tax_mode'              => isset( $request['tax_mode'] ) ? (string) $request['tax_mode'] : 'including',
+				'discount_percent'      => isset( $request['discount_percent'] ) ? (float) $request['discount_percent'] : 0,
+				'is_automatic'          => ! empty( $request['is_automatic'] ) ? 1 : 0,
+				'catalog_key'           => isset( $request['catalog_key'] ) ? sanitize_key( (string) $request['catalog_key'] ) : '',
+				'source_signature'      => isset( $request['source_signature'] ) ? sanitize_text_field( (string) $request['source_signature'] ) : '',
+				'include_out_of_stock'  => ! empty( $settings['include_out_of_stock'] ) ? 1 : 0,
 				'excluded_category_ids' => isset( $settings['excluded_category_ids'] ) ? (array) $settings['excluded_category_ids'] : array(),
-				'attribute_columns'    => isset( $settings['attribute_columns'] ) ? (array) $settings['attribute_columns'] : array(),
-				'settings_snapshot'    => $settings,
-				'created_by_user_id'   => get_current_user_id(),
-				'created_at_gmt'       => $now_gmt,
-				'updated_at_gmt'       => $now_gmt,
+				'attribute_columns'     => isset( $settings['attribute_columns'] ) ? (array) $settings['attribute_columns'] : array(),
+				'settings_snapshot'     => $settings,
+				'created_by_user_id'    => isset( $request['created_by_user_id'] ) ? absint( $request['created_by_user_id'] ) : get_current_user_id(),
+				'created_at_gmt'        => $now_gmt,
+				'updated_at_gmt'        => $now_gmt,
 			)
 		);
 
@@ -60,6 +70,42 @@ final class Catalog_Generator {
 		return array(
 			'ok'        => true,
 			'record_id' => $record_id,
+		);
+	}
+
+	public static function maybe_queue_daily_standard_catalog(): void {
+		if ( ! Plugin::is_woocommerce_available() ) {
+			return;
+		}
+
+		$settings = Settings::get_all();
+		if ( empty( $settings['enable_daily_automatic_catalog'] ) ) {
+			return;
+		}
+
+		$catalog_key = Catalog_Repository::AUTO_STANDARD_KEY;
+		if ( Catalog_Repository::has_pending_by_catalog_key( $catalog_key ) ) {
+			return;
+		}
+
+		$signature = self::build_standard_source_signature( $settings );
+		$current   = Catalog_Repository::get_latest_completed_by_catalog_key( $catalog_key );
+
+		if ( is_array( $current ) && isset( $current['source_signature'] ) && (string) $current['source_signature'] === $signature ) {
+			return;
+		}
+
+		self::queue(
+			array(
+				'catalog_type'      => 'standard',
+				'client_name'       => '',
+				'tax_mode'          => 'including',
+				'discount_percent'  => 0,
+				'is_automatic'      => true,
+				'catalog_key'       => $catalog_key,
+				'source_signature'  => $signature,
+				'created_by_user_id' => 0,
+			)
 		);
 	}
 
@@ -96,23 +142,32 @@ final class Catalog_Generator {
 			)
 		);
 
-		try {
-			$document  = self::build_document( $record );
-			$file_name = Storage::build_file_name( (string) $record['client_name'], (string) $record['created_at_gmt'] );
-			$file_path = Storage::absolute_path_for_file_name( $file_name );
-			$result    = Pdf_Renderer::render_to_path( $document, $file_path );
+		$html_path     = '';
+		$product_count = 0;
 
-			if ( empty( $result['ok'] ) || empty( $result['path'] ) ) {
+		try {
+			$html_result  = self::build_document_html_file( $record );
+			$html_path    = isset( $html_result['path'] ) ? (string) $html_result['path'] : '';
+			$product_count = isset( $html_result['product_count'] ) ? (int) $html_result['product_count'] : 0;
+			$file_name    = Storage::build_file_name( (string) $record['client_name'], (string) $record['created_at_gmt'] );
+			$result       = Pdf_Renderer::render_html_file( $html_path );
+
+			if ( empty( $result['ok'] ) || empty( $result['binary'] ) || ! is_string( $result['binary'] ) ) {
 				throw new \RuntimeException( isset( $result['error'] ) ? (string) $result['error'] : 'render-failed' );
+			}
+
+			$stored = Storage::store_pdf_binary( $record_id, $result['binary'], $file_name );
+			if ( empty( $stored['ok'] ) || empty( $stored['path'] ) || ! is_string( $stored['path'] ) ) {
+				throw new \RuntimeException( isset( $stored['error'] ) ? (string) $stored['error'] : 'storage-failed' );
 			}
 
 			Catalog_Repository::update(
 				$record_id,
 				array(
 					'status'             => 'completed',
-					'file_relative_path' => Storage::relative_path_from_absolute( (string) $result['path'] ),
+					'file_relative_path' => Storage::relative_path_from_absolute( $stored['path'] ),
 					'file_name'          => $file_name,
-					'product_count'      => isset( $document['product_count'] ) ? (int) $document['product_count'] : 0,
+					'product_count'      => $product_count,
 					'completed_at_gmt'   => gmdate( 'Y-m-d H:i:s' ),
 					'error_message'      => '',
 				)
@@ -125,36 +180,96 @@ final class Catalog_Generator {
 					'error_message' => wp_strip_all_tags( $throwable->getMessage() ),
 				)
 			);
+		} finally {
+			if ( '' !== $html_path && file_exists( $html_path ) ) {
+				wp_delete_file( $html_path );
+			}
 		}
 	}
 
 	/**
 	 * @param array<string,mixed> $record
-	 * @return array<string,mixed>
+	 * @return array{path:string,product_count:int}
 	 */
-	private static function build_document( array $record ): array {
-		$settings_snapshot = isset( $record['settings_snapshot'] ) && is_array( $record['settings_snapshot'] )
-			? $record['settings_snapshot']
-			: Settings::defaults();
-		$attribute_columns = isset( $record['attribute_columns'] ) && is_array( $record['attribute_columns'] )
-			? $record['attribute_columns']
-			: array();
-		$excluded_categories = isset( $record['excluded_category_ids'] ) && is_array( $record['excluded_category_ids'] )
-			? array_map( 'absint', $record['excluded_category_ids'] )
-			: array();
+	private static function build_document_html_file( array $record ): array {
+		$settings_snapshot   = isset( $record['settings_snapshot'] ) && is_array( $record['settings_snapshot'] ) ? $record['settings_snapshot'] : Settings::defaults();
+		$attribute_columns   = isset( $record['attribute_columns'] ) && is_array( $record['attribute_columns'] ) ? $record['attribute_columns'] : array();
+		$excluded_categories = isset( $record['excluded_category_ids'] ) && is_array( $record['excluded_category_ids'] ) ? array_map( 'absint', $record['excluded_category_ids'] ) : array();
 		$include_out_of_stock = ! empty( $record['include_out_of_stock'] );
-		$tax_mode = isset( $record['tax_mode'] ) && 'excluding' === $record['tax_mode'] ? 'excluding' : 'including';
-		$discount_percent = isset( $record['discount_percent'] ) ? (float) $record['discount_percent'] : 0.0;
+		$tax_mode            = isset( $record['tax_mode'] ) && 'excluding' === $record['tax_mode'] ? 'excluding' : 'including';
+		$discount_percent    = isset( $record['discount_percent'] ) ? (float) $record['discount_percent'] : 0.0;
+		$product_count       = self::count_products( $include_out_of_stock, $excluded_categories );
+		$document            = self::build_document_context(
+			$record,
+			$settings_snapshot,
+			$attribute_columns,
+			$excluded_categories,
+			$tax_mode,
+			$discount_percent,
+			$product_count
+		);
 
-		$products = self::query_products( $include_out_of_stock, $excluded_categories );
-		$rows     = array();
-
-		foreach ( $products as $product ) {
-			$rows[] = self::build_product_row( $product, $attribute_columns, $tax_mode, $discount_percent );
+		$html_path = self::create_temp_html_path();
+		$handle    = fopen( $html_path, 'wb' );
+		if ( false === $handle ) {
+			throw new \RuntimeException( 'html-open-failed' );
 		}
 
-		$attribute_labels = array();
+		try {
+			self::write_html_chunk(
+				$handle,
+				self::render_template(
+					'catalog-start.php',
+					array(
+						'document_data' => $document,
+					)
+				)
+			);
+
+			self::walk_products(
+				$include_out_of_stock,
+				$excluded_categories,
+				static function ( WC_Product $product ) use ( $handle, $document, $attribute_columns, $tax_mode, $discount_percent ): void {
+					$row = self::build_product_row( $product, $attribute_columns, $tax_mode, $discount_percent );
+					self::write_html_chunk(
+						$handle,
+						self::render_template(
+							'catalog-row-group.php',
+							array(
+								'document_data' => $document,
+								'row'           => $row,
+							)
+						)
+					);
+				}
+			);
+
+			self::write_html_chunk( $handle, self::render_template( 'catalog-end.php', array() ) );
+		} catch ( \Throwable $throwable ) {
+			fclose( $handle );
+			wp_delete_file( $html_path );
+			throw $throwable;
+		}
+
+		fclose( $handle );
+
+		return array(
+			'path'          => $html_path,
+			'product_count' => $product_count,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $record
+	 * @param array<string,mixed> $settings_snapshot
+	 * @param array<int,string>   $attribute_columns
+	 * @param array<int,int>      $excluded_categories
+	 * @return array<string,mixed>
+	 */
+	private static function build_document_context( array $record, array $settings_snapshot, array $attribute_columns, array $excluded_categories, string $tax_mode, float $discount_percent, int $product_count ): array {
+		$attribute_labels  = array();
 		$attribute_options = Settings::get_attribute_column_options();
+
 		foreach ( $attribute_columns as $taxonomy ) {
 			$attribute_labels[] = array(
 				'taxonomy' => $taxonomy,
@@ -172,12 +287,7 @@ final class Catalog_Generator {
 				$client_name
 			)
 			: __( 'Product Catalog', 'pdf-product-catalogs-for-woocommerce' );
-
-		$scope_labels = array(
-			$include_out_of_stock
-				? __( 'Includes out-of-stock products', 'pdf-product-catalogs-for-woocommerce' )
-				: __( 'In-stock products only', 'pdf-product-catalogs-for-woocommerce' ),
-		);
+		$scope_labels        = array();
 
 		if ( ! empty( $excluded_categories ) ) {
 			$scope_labels[] = sprintf(
@@ -188,76 +298,295 @@ final class Catalog_Generator {
 		}
 
 		return array(
-			'title'              => $title,
-			'header_text'        => isset( $settings_snapshot['header_text'] ) ? (string) $settings_snapshot['header_text'] : '',
-			'footer_text'        => isset( $settings_snapshot['footer_text'] ) ? (string) $settings_snapshot['footer_text'] : '',
-			'generated_label'    => wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $generated_timestamp ),
-			'price_basis_label'  => 'excluding' === $tax_mode
+			'site_title'        => (string) get_option( 'blogname', '' ),
+			'title'             => $title,
+			'header_text'       => isset( $settings_snapshot['header_text'] ) ? (string) $settings_snapshot['header_text'] : '',
+			'footer_text'       => isset( $settings_snapshot['footer_text'] ) ? (string) $settings_snapshot['footer_text'] : '',
+			'generated_label'   => wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $generated_timestamp ),
+			'price_basis_label' => 'excluding' === $tax_mode
 				? __( 'Prices shown excluding tax', 'pdf-product-catalogs-for-woocommerce' )
 				: __( 'Prices shown including tax', 'pdf-product-catalogs-for-woocommerce' ),
-			'discount_label'     => $discount_percent > 0
+			'discount_label'    => $discount_percent > 0
 				? sprintf(
 					/* translators: %s discount percentage */
 					__( 'Client discount applied: %s%%', 'pdf-product-catalogs-for-woocommerce' ),
 					number_format_i18n( $discount_percent, 2 )
 				)
-				: __( 'No client discount applied', 'pdf-product-catalogs-for-woocommerce' ),
-			'scope_labels'       => $scope_labels,
-			'attribute_columns'  => $attribute_labels,
-			'rows'               => $rows,
-			'product_count'      => count( $rows ),
+				: '',
+			'scope_labels'      => $scope_labels,
+			'attribute_columns' => $attribute_labels,
+			'product_count'     => $product_count,
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $settings
+	 */
+	private static function build_standard_source_signature( array $settings ): string {
+		$include_out_of_stock = ! empty( $settings['include_out_of_stock'] );
+		$excluded_categories  = isset( $settings['excluded_category_ids'] ) && is_array( $settings['excluded_category_ids'] )
+			? array_map( 'absint', $settings['excluded_category_ids'] )
+			: array();
+		$attribute_columns    = isset( $settings['attribute_columns'] ) && is_array( $settings['attribute_columns'] )
+			? array_values( array_map( 'strval', $settings['attribute_columns'] ) )
+			: array();
+		$attribute_options    = Settings::get_attribute_column_options();
+
+		$settings_fingerprint = array(
+			'header_text'           => isset( $settings['header_text'] ) ? (string) $settings['header_text'] : '',
+			'footer_text'           => isset( $settings['footer_text'] ) ? (string) $settings['footer_text'] : '',
+			'include_out_of_stock'  => $include_out_of_stock,
+			'excluded_category_ids' => $excluded_categories,
+			'attribute_columns'     => $attribute_columns,
+			'attribute_labels'      => array_map(
+				static fn ( string $taxonomy ): string => (string) ( $attribute_options[ $taxonomy ] ?? $taxonomy ),
+				$attribute_columns
+			),
+			'site_title'            => (string) get_option( 'blogname', '' ),
+			'currency'              => array(
+				'code'         => get_woocommerce_currency(),
+				'position'     => get_option( 'woocommerce_currency_pos', 'left' ),
+				'decimal_sep'  => wc_get_price_decimal_separator(),
+				'thousand_sep' => wc_get_price_thousand_separator(),
+				'decimals'     => wc_get_price_decimals(),
+			),
+			'tax_mode'              => 'including',
+		);
+
+		$product_fingerprint = array();
+		self::walk_products(
+			$include_out_of_stock,
+			$excluded_categories,
+			static function ( WC_Product $product ) use ( &$product_fingerprint, $attribute_columns ): void {
+				$product_fingerprint[] = self::build_product_signature_payload( $product, $attribute_columns, 'including', 0.0 );
+			}
+		);
+
+		return sha1(
+			(string) wp_json_encode(
+				array(
+					'settings' => $settings_fingerprint,
+					'products' => $product_fingerprint,
+				)
+			)
+		);
+	}
+
+	private static function count_products( bool $include_out_of_stock, array $excluded_categories ): int {
+		return self::walk_products(
+			$include_out_of_stock,
+			$excluded_categories,
+			static function ( WC_Product $unused_product ): void {
+				unset( $unused_product );
+			}
 		);
 	}
 
 	/**
 	 * @param array<int,int> $excluded_categories
-	 * @return array<int,WC_Product>
 	 */
-	private static function query_products( bool $include_out_of_stock, array $excluded_categories ): array {
-		$args = array(
-			'status' => 'publish',
-			'limit'  => -1,
-			'return' => 'objects',
-			'type'   => array( 'simple', 'variable', 'external' ),
-			'orderby' => 'title',
-			'order'  => 'ASC',
+	private static function walk_products( bool $include_out_of_stock, array $excluded_categories, callable $callback ): int {
+		$page      = 1;
+		$processed = 0;
+
+		do {
+			$product_ids = self::query_product_batch_ids( $page );
+			if ( empty( $product_ids ) ) {
+				break;
+			}
+
+			foreach ( $product_ids as $product_id ) {
+				$product = wc_get_product( $product_id );
+				if ( ! $product instanceof WC_Product ) {
+					continue;
+				}
+
+				if ( ! in_array( $product->get_catalog_visibility(), array( 'visible', 'catalog' ), true ) ) {
+					continue;
+				}
+
+				if ( ! $include_out_of_stock && ! $product->is_in_stock() ) {
+					continue;
+				}
+
+				if ( self::product_has_excluded_category( $product, $excluded_categories ) ) {
+					continue;
+				}
+
+				++$processed;
+				$callback( $product );
+			}
+
+			++$page;
+		} while ( count( $product_ids ) === self::PRODUCT_BATCH_SIZE );
+
+		return $processed;
+	}
+
+	/**
+	 * @return array<int,int>
+	 */
+	private static function query_product_batch_ids( int $page ): array {
+		$product_ids = wc_get_products(
+			array(
+				'status'  => 'publish',
+				'limit'   => self::PRODUCT_BATCH_SIZE,
+				'page'    => max( 1, $page ),
+				'return'  => 'ids',
+				'type'    => array( 'simple', 'variable', 'external' ),
+				'orderby' => 'title',
+				'order'   => 'ASC',
+			)
 		);
 
-		$products = wc_get_products( $args );
-		if ( ! is_array( $products ) ) {
+		if ( ! is_array( $product_ids ) ) {
 			return array();
 		}
 
-		$filtered = array();
+		return array_values( array_filter( array_map( 'absint', $product_ids ) ) );
+	}
 
-		foreach ( $products as $product ) {
-			if ( ! $product instanceof WC_Product ) {
-				continue;
-			}
-
-			if ( ! in_array( $product->get_catalog_visibility(), array( 'visible', 'catalog' ), true ) ) {
-				continue;
-			}
-
-			if ( ! $include_out_of_stock && ! $product->is_in_stock() ) {
-				continue;
-			}
-
-			if ( self::product_has_excluded_category( $product, $excluded_categories ) ) {
-				continue;
-			}
-
-			$filtered[] = $product;
+	/**
+	 * @param array<int,string> $attribute_columns
+	 * @return array<string,mixed>
+	 */
+	private static function build_product_row( WC_Product $product, array $attribute_columns, string $tax_mode, float $discount_percent ): array {
+		$attributes = array();
+		foreach ( $attribute_columns as $taxonomy ) {
+			$attributes[] = self::get_attribute_value( $product, $taxonomy );
 		}
 
-		usort(
-			$filtered,
-			static function ( WC_Product $left, WC_Product $right ): int {
-				return strcasecmp( $left->get_name(), $right->get_name() );
+		$variant_rows = array();
+		$price        = self::get_price_label( $product, $tax_mode, $discount_percent );
+
+		if ( $product instanceof WC_Product_Variable ) {
+			$variant_rows = self::build_variation_rows( $product, $attribute_columns, $tax_mode, $discount_percent );
+			if ( ! empty( $variant_rows ) ) {
+				$price = '';
 			}
+		}
+
+		return array(
+			'image_data_uri'  => self::get_image_data_uri( $product ),
+			'name'            => $product->get_name(),
+			'sku'             => (string) $product->get_sku(),
+			'gtin'            => (string) $product->get_global_unique_id(),
+			'price'           => $price,
+			'product_url'     => self::get_public_product_url( $product ),
+			'attributes'      => $attributes,
+			'is_out_of_stock' => ! $product->is_in_stock(),
+			'variant_rows'    => $variant_rows,
+		);
+	}
+
+	/**
+	 * @param array<int,string> $attribute_columns
+	 * @return array<int,array<string,mixed>>
+	 */
+	private static function build_variation_rows( WC_Product_Variable $product, array $attribute_columns, string $tax_mode, float $discount_percent ): array {
+		$variation_rows = array();
+
+		foreach ( $product->get_visible_children() as $variation_id ) {
+			$variation = wc_get_product( $variation_id );
+			if ( ! $variation instanceof WC_Product_Variation ) {
+				continue;
+			}
+
+			$attributes = array();
+			foreach ( $attribute_columns as $taxonomy ) {
+				$attributes[] = self::get_attribute_value( $variation, $taxonomy );
+			}
+
+			$variation_rows[] = array(
+				'image_data_uri'  => self::get_image_data_uri( $variation ),
+				'name'            => $variation->get_name(),
+				'sku'             => (string) $variation->get_sku(),
+				'gtin'            => (string) $variation->get_global_unique_id(),
+				'attributes'      => $attributes,
+				'price'           => self::get_price_label( $variation, $tax_mode, $discount_percent ),
+				'product_url'     => self::get_public_product_url( $variation ),
+				'is_out_of_stock' => ! $variation->is_in_stock(),
+			);
+		}
+
+		return $variation_rows;
+	}
+
+	private static function get_attribute_value( WC_Product $product, string $taxonomy ): string {
+		$value = trim( wp_strip_all_tags( (string) $product->get_attribute( $taxonomy ) ) );
+		if ( '' !== $value ) {
+			return $value;
+		}
+
+		if ( $product instanceof WC_Product_Variation ) {
+			$parent_id = $product->get_parent_id();
+			if ( $parent_id > 0 ) {
+				$parent = wc_get_product( $parent_id );
+				if ( $parent instanceof WC_Product ) {
+					return trim( wp_strip_all_tags( (string) $parent->get_attribute( $taxonomy ) ) );
+				}
+			}
+		}
+
+		return '';
+	}
+
+	/**
+	 * @param array<int,string> $attribute_columns
+	 * @return array<string,mixed>
+	 */
+	private static function build_product_signature_payload( WC_Product $product, array $attribute_columns, string $tax_mode, float $discount_percent ): array {
+		$attributes = array();
+		foreach ( $attribute_columns as $taxonomy ) {
+			$attributes[] = self::get_attribute_value( $product, $taxonomy );
+		}
+
+		$payload = array(
+			'id'              => $product->get_id(),
+			'type'            => $product->get_type(),
+			'name'            => $product->get_name(),
+			'sku'             => (string) $product->get_sku(),
+			'gtin'            => (string) $product->get_global_unique_id(),
+			'modified'        => get_post_modified_time( 'c', true, $product->get_id() ),
+			'price_label'     => self::get_price_label( $product, $tax_mode, $discount_percent ),
+			'stock'           => $product->get_stock_status(),
+			'visibility'      => $product->get_catalog_visibility(),
+			'public_url'      => self::get_public_product_url( $product ),
+			'attributes'      => $attributes,
+			'image_signature' => self::get_image_signature( $product ),
 		);
 
-		return $filtered;
+		if ( $product instanceof WC_Product_Variable ) {
+			$children = array();
+
+			foreach ( $product->get_visible_children() as $variation_id ) {
+				$variation = wc_get_product( $variation_id );
+				if ( ! $variation instanceof WC_Product_Variation ) {
+					continue;
+				}
+
+				$children[] = array(
+					'id'              => $variation->get_id(),
+					'name'            => $variation->get_name(),
+					'sku'             => (string) $variation->get_sku(),
+					'gtin'            => (string) $variation->get_global_unique_id(),
+					'modified'        => get_post_modified_time( 'c', true, $variation->get_id() ),
+					'price_label'     => self::get_price_label( $variation, $tax_mode, $discount_percent ),
+					'stock'           => $variation->get_stock_status(),
+					'public_url'      => self::get_public_product_url( $variation ),
+					'attrs'           => array_map(
+						static fn ( string $taxonomy ): string => self::get_attribute_value( $variation, $taxonomy ),
+						$attribute_columns
+					),
+					'image_signature' => self::get_image_signature( $variation ),
+				);
+			}
+
+			$payload['children']    = $children;
+			$payload['price_label'] = empty( $children ) ? $payload['price_label'] : '';
+		}
+
+		return $payload;
 	}
 
 	/**
@@ -274,54 +603,6 @@ final class Catalog_Generator {
 		}
 
 		return ! empty( array_intersect( $excluded_categories, array_map( 'absint', $product_categories ) ) );
-	}
-
-	/**
-	 * @param array<int,string> $attribute_columns
-	 * @return array<string,mixed>
-	 */
-	private static function build_product_row( WC_Product $product, array $attribute_columns, string $tax_mode, float $discount_percent ): array {
-		$attributes = array();
-		foreach ( $attribute_columns as $taxonomy ) {
-			$attributes[] = self::get_attribute_value( $product, $taxonomy );
-		}
-
-		return array(
-			'image_data_uri' => self::get_image_data_uri( $product ),
-			'name'           => $product->get_name(),
-			'sku'            => (string) $product->get_sku(),
-			'gtin'           => (string) $product->get_global_unique_id(),
-			'price'          => self::get_price_label( $product, $tax_mode, $discount_percent ),
-			'product_url'    => self::get_public_product_url( $product ),
-			'attributes'     => $attributes,
-		);
-	}
-
-	private static function get_attribute_value( WC_Product $product, string $taxonomy ): string {
-		$attributes = $product->get_attributes();
-		if ( empty( $attributes ) ) {
-			return '';
-		}
-
-		foreach ( $attributes as $attribute ) {
-			if ( ! $attribute instanceof \WC_Product_Attribute ) {
-				continue;
-			}
-
-			if ( $attribute->get_name() !== $taxonomy ) {
-				continue;
-			}
-
-			if ( $attribute->is_taxonomy() ) {
-				$values = wc_get_product_terms( $product->get_id(), $taxonomy, array( 'fields' => 'names' ) );
-				return is_array( $values ) ? implode( ', ', array_map( 'strval', $values ) ) : '';
-			}
-
-			$options = $attribute->get_options();
-			return is_array( $options ) ? implode( ', ', array_map( 'strval', $options ) ) : '';
-		}
-
-		return '';
 	}
 
 	private static function get_price_label( WC_Product $product, string $tax_mode, float $discount_percent ): string {
@@ -381,11 +662,16 @@ final class Catalog_Generator {
 	}
 
 	private static function get_public_product_url( WC_Product $product ): string {
+		if ( 'publish' !== $product->get_status() || ! $product->is_in_stock() ) {
+			return '';
+		}
+
 		if ( ! in_array( $product->get_catalog_visibility(), array( 'visible', 'catalog', 'search' ), true ) ) {
 			return '';
 		}
 
 		$url = get_permalink( $product->get_id() );
+
 		return is_string( $url ) ? $url : '';
 	}
 
@@ -395,22 +681,166 @@ final class Catalog_Generator {
 			return '';
 		}
 
-		$path = get_attached_file( $image_id );
-		if ( ! is_string( $path ) || '' === $path || ! file_exists( $path ) ) {
+		if ( isset( self::$image_data_uri_cache[ $image_id ] ) ) {
+			return self::$image_data_uri_cache[ $image_id ];
+		}
+
+		$path = self::resolve_attachment_path( $image_id );
+		if ( '' === $path || ! file_exists( $path ) ) {
+			self::$image_data_uri_cache[ $image_id ] = '';
+			return '';
+		}
+
+		$file_size = filesize( $path );
+		if ( false !== $file_size && $file_size > self::MAX_EMBEDDED_IMAGE_BYTES ) {
+			self::$image_data_uri_cache[ $image_id ] = '';
 			return '';
 		}
 
 		$mime = wp_check_filetype( $path );
 		$type = isset( $mime['type'] ) ? (string) $mime['type'] : '';
 		if ( '' === $type ) {
+			self::$image_data_uri_cache[ $image_id ] = '';
 			return '';
 		}
 
 		$contents = file_get_contents( $path );
 		if ( false === $contents ) {
+			self::$image_data_uri_cache[ $image_id ] = '';
 			return '';
 		}
 
-		return 'data:' . $type . ';base64,' . base64_encode( $contents );
+		self::$image_data_uri_cache[ $image_id ] = 'data:' . $type . ';base64,' . base64_encode( $contents );
+
+		return self::$image_data_uri_cache[ $image_id ];
+	}
+
+	private static function get_image_signature( WC_Product $product ): string {
+		$image_id = $product->get_image_id();
+		if ( $image_id < 1 ) {
+			return '';
+		}
+
+		$path = self::resolve_attachment_path( $image_id );
+		if ( '' === $path || ! file_exists( $path ) ) {
+			return (string) $image_id;
+		}
+
+		$mtime = filemtime( $path );
+
+		return implode(
+			':',
+			array(
+				(string) $image_id,
+				basename( $path ),
+				false !== $mtime ? (string) $mtime : '',
+			)
+		);
+	}
+
+	private static function resolve_attachment_path( int $image_id ): string {
+		$original_path = get_attached_file( $image_id );
+		if ( ! is_string( $original_path ) || '' === $original_path ) {
+			return '';
+		}
+
+		$metadata = wp_get_attachment_metadata( $image_id );
+		if ( ! is_array( $metadata ) || empty( $metadata['sizes'] ) || ! is_array( $metadata['sizes'] ) ) {
+			return $original_path;
+		}
+
+		$directory  = trailingslashit( dirname( $original_path ) );
+		$candidates = array();
+		$preferred  = array( 'woocommerce_thumbnail', 'thumbnail', 'medium', 'woocommerce_single' );
+
+		foreach ( $preferred as $size_name ) {
+			if ( empty( $metadata['sizes'][ $size_name ]['file'] ) ) {
+				continue;
+			}
+
+			$candidate = $directory . $metadata['sizes'][ $size_name ]['file'];
+			if ( file_exists( $candidate ) ) {
+				$candidates[] = $candidate;
+			}
+		}
+
+		if ( empty( $candidates ) ) {
+			foreach ( $metadata['sizes'] as $size_data ) {
+				if ( empty( $size_data['file'] ) || ! is_string( $size_data['file'] ) ) {
+					continue;
+				}
+
+				$candidate = $directory . $size_data['file'];
+				if ( file_exists( $candidate ) ) {
+					$candidates[] = $candidate;
+				}
+			}
+		}
+
+		if ( empty( $candidates ) ) {
+			return $original_path;
+		}
+
+		usort(
+			$candidates,
+			static function ( string $left, string $right ): int {
+				$left_size  = filesize( $left );
+				$right_size = filesize( $right );
+
+				return (int) ( $left_size <=> $right_size );
+			}
+		);
+
+		return $candidates[0];
+	}
+
+	/**
+	 * @param array<string,mixed> $variables
+	 */
+	private static function render_template( string $template_name, array $variables ): string {
+		$template_path = PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_DIR . 'templates/' . $template_name;
+		if ( ! file_exists( $template_path ) ) {
+			throw new \RuntimeException( 'missing-template:' . $template_name );
+		}
+
+		extract( $variables, EXTR_SKIP );
+
+		ob_start();
+		include $template_path;
+
+		return (string) ob_get_clean();
+	}
+
+	/**
+	 * @param resource $handle
+	 */
+	private static function write_html_chunk( $handle, string $html ): void {
+		if ( false === fwrite( $handle, $html ) ) {
+			throw new \RuntimeException( 'html-write-failed' );
+		}
+	}
+
+	private static function create_temp_html_path(): string {
+		$tmp_base = defined( 'WP_TEMP_DIR' ) && is_string( WP_TEMP_DIR ) && '' !== trim( WP_TEMP_DIR )
+			? (string) WP_TEMP_DIR
+			: (string) sys_get_temp_dir();
+		$tmp_dir  = trailingslashit( rtrim( $tmp_base, '/' ) ) . 'pdf-product-catalogs-for-woocommerce';
+
+		if ( ! is_dir( $tmp_dir ) ) {
+			wp_mkdir_p( $tmp_dir );
+		}
+
+		$temp_path = tempnam( $tmp_dir, 'catalog-html-' );
+		if ( false === $temp_path ) {
+			throw new \RuntimeException( 'html-tempnam-failed' );
+		}
+
+		$html_path = $temp_path . '.html';
+		if ( ! @rename( $temp_path, $html_path ) ) {
+			wp_delete_file( $temp_path );
+			throw new \RuntimeException( 'html-tempfile-rename-failed' );
+		}
+
+		return $html_path;
 	}
 }

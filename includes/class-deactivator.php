@@ -12,6 +12,10 @@ final class Deactivator {
 
 		if ( function_exists( 'as_unschedule_all_actions' ) ) {
 			as_unschedule_all_actions( Plugin::ASYNC_ACTION, array(), Plugin::ASYNC_GROUP );
+			as_unschedule_all_actions( Plugin::AUTO_REFRESH_HOOK, array(), Plugin::ASYNC_GROUP );
+			as_unschedule_all_actions( Plugin::STORAGE_MIGRATION_HOOK, array(), Plugin::ASYNC_GROUP );
 		}
+
+		wp_clear_scheduled_hook( Plugin::AUTO_REFRESH_HOOK );
 	}
 }
