@@ -4,8 +4,8 @@ Requires Plugins: woocommerce
 Requires at least: 6.8
 Requires PHP: 8.0
 Tested up to: 6.8
-Version: 0.0.1
-Stable tag: 0.0.1
+Version: 0.1.0
+Stable tag: 0.1.0
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -151,6 +151,13 @@ The plugin stays inert and does not display its admin page while WooCommerce is 
 When the plugin is deleted through the WordPress admin, all plugin data is removed. This includes the catalog history table, plugin settings, stored encryption keys, and all generated catalog files. Deactivating the plugin does not remove data.
 
 == Changelog ==
+
+= 0.1.0 =
+* enhance third-party dependency embedding
+* maintenance updates
+* maintenance fixes
+* maintenance fixes
+
 
 = 0.0.1 =
 * Initial public release.
