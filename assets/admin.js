@@ -1,5 +1,6 @@
 (() => {
   const modal = document.querySelector(".ppcfw-modal");
+  const wizardForm = document.querySelector(".ppcfw-wizard-form");
   const openButtons = document.querySelectorAll(".ppcfw-open-modal");
   const closeButtons = document.querySelectorAll(".ppcfw-close-modal");
   const stepBack = document.querySelector(".ppcfw-step-back");
@@ -7,6 +8,7 @@
   const submitButton = document.querySelector(".ppcfw-submit-catalog");
   const steps = Array.from(document.querySelectorAll(".ppcfw-wizard-step"));
   const clientNameInput = document.getElementById("ppcfw-client-name");
+  const discountInput = document.getElementById("ppcfw-discount-percent");
   const typeInputs = Array.from(document.querySelectorAll('input[name="catalog_type"]'));
   const pendingRecordIds = Array.isArray(window.ppcfwAdmin?.pendingRecordIds) ? window.ppcfwAdmin.pendingRecordIds : [];
   let currentStep = 1;
@@ -15,6 +17,7 @@
     if (!modal) {
       return;
     }
+    currentStep = 1;
     modal.hidden = false;
     document.body.classList.add("ppcfw-modal-open");
     renderStep();
@@ -33,21 +36,48 @@
     return selected?.value === "client-specific";
   };
 
+  const setElementVisibility = (element, isVisible) => {
+    if (!element) {
+      return;
+    }
+
+    element.hidden = !isVisible;
+    element.style.display = isVisible ? "" : "none";
+    element.setAttribute("aria-hidden", isVisible ? "false" : "true");
+  };
+
+  const getActiveSteps = () => steps.filter((step) => {
+    const flow = step.dataset.flow || "all";
+    return flow === "all" || isClientSpecific();
+  });
+
   const renderStep = () => {
+    const activeSteps = getActiveSteps();
+    const activeStepNumbers = activeSteps.map((step) => Number(step.dataset.step));
+
+    if (!activeStepNumbers.includes(currentStep) && activeSteps.length > 0) {
+      currentStep = Number(activeSteps[0].dataset.step);
+    }
+
     steps.forEach((step) => {
-      step.classList.toggle("is-active", Number(step.dataset.step) === currentStep);
+      const stepNumber = Number(step.dataset.step);
+      const isActiveFlowStep = activeStepNumbers.includes(stepNumber);
+      step.hidden = !isActiveFlowStep;
+      step.classList.toggle("is-active", isActiveFlowStep && stepNumber === currentStep);
     });
 
     if (stepBack) {
-      stepBack.disabled = currentStep === 1;
+      stepBack.disabled = activeStepNumbers.indexOf(currentStep) <= 0;
     }
 
+    const isLastStep = currentStep === activeStepNumbers[activeStepNumbers.length - 1];
+
     if (stepNext) {
-      stepNext.hidden = currentStep === steps.length;
+      setElementVisibility(stepNext, !isLastStep);
     }
 
     if (submitButton) {
-      submitButton.hidden = currentStep !== steps.length;
+      setElementVisibility(submitButton, isLastStep);
     }
   };
 
@@ -71,7 +101,11 @@
 
   if (stepBack) {
     stepBack.addEventListener("click", () => {
-      currentStep = Math.max(1, currentStep - 1);
+      const activeSteps = getActiveSteps();
+      const currentIndex = activeSteps.findIndex((step) => Number(step.dataset.step) === currentStep);
+      if (currentIndex > 0) {
+        currentStep = Number(activeSteps[currentIndex - 1].dataset.step);
+      }
       renderStep();
     });
   }
@@ -82,8 +116,28 @@
         return;
       }
 
-      currentStep = Math.min(steps.length, currentStep + 1);
+      const activeSteps = getActiveSteps();
+      const currentIndex = activeSteps.findIndex((step) => Number(step.dataset.step) === currentStep);
+      if (currentIndex >= 0 && currentIndex < activeSteps.length - 1) {
+        currentStep = Number(activeSteps[currentIndex + 1].dataset.step);
+      }
       renderStep();
+    });
+  }
+
+  if (wizardForm) {
+    wizardForm.addEventListener("submit", (event) => {
+      const activeSteps = getActiveSteps();
+      const lastStep = activeSteps[activeSteps.length - 1];
+
+      if (lastStep && currentStep !== Number(lastStep.dataset.step)) {
+        event.preventDefault();
+        return;
+      }
+
+      if (!validateCurrentStep()) {
+        event.preventDefault();
+      }
     });
   }
 
@@ -92,6 +146,12 @@
       if (!isClientSpecific() && clientNameInput) {
         clientNameInput.value = "";
       }
+
+      if (!isClientSpecific() && discountInput) {
+        discountInput.value = "0";
+      }
+
+      renderStep();
     });
   });
 
@@ -124,7 +184,11 @@
 
     const actionsCell = row.querySelector(".ppcfw-actions-cell");
     if (actionsCell && record.downloadUrl) {
-      actionsCell.innerHTML = `<a class="button button-secondary" href="${record.downloadUrl}">Download PDF</a>`;
+      const link = document.createElement("a");
+      link.className = "button button-secondary";
+      link.href = record.downloadUrl;
+      link.textContent = "Download PDF";
+      actionsCell.replaceChildren(link);
     }
   };
 

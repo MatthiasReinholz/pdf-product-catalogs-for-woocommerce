@@ -9,6 +9,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class Catalog_Repository {
+	private const SCHEMA_VERSION     = '1.1.0';
+	private const SCHEMA_OPTION_NAME = 'ppcfw_catalogs_schema_version';
+
 	/**
 	 * @var array<int,string>
 	 */
@@ -17,6 +20,8 @@ final class Catalog_Repository {
 		'attribute_columns',
 		'settings_snapshot',
 	);
+
+	public const AUTO_STANDARD_KEY = 'auto-standard';
 
 	public static function table_name(): string {
 		global $wpdb;
@@ -36,6 +41,16 @@ final class Catalog_Repository {
 		}
 
 		$table_name = self::table_name();
+		if ( '' === $table_name ) {
+			return;
+		}
+
+		$current_version = get_option( self::SCHEMA_OPTION_NAME, '' );
+		$table_exists    = self::table_exists( $table_name );
+
+		if ( $table_exists && self::SCHEMA_VERSION === $current_version ) {
+			return;
+		}
 
 		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
@@ -48,6 +63,9 @@ final class Catalog_Repository {
 			is_client_specific tinyint(1) unsigned NOT NULL DEFAULT 0,
 			tax_mode varchar(20) NOT NULL DEFAULT 'including',
 			discount_percent decimal(6,2) NOT NULL DEFAULT 0.00,
+			is_automatic tinyint(1) unsigned NOT NULL DEFAULT 0,
+			catalog_key varchar(64) NOT NULL DEFAULT '',
+			source_signature varchar(64) NOT NULL DEFAULT '',
 			include_out_of_stock tinyint(1) unsigned NOT NULL DEFAULT 0,
 			excluded_category_ids longtext NULL,
 			attribute_columns longtext NULL,
@@ -62,10 +80,12 @@ final class Catalog_Repository {
 			error_message text NULL,
 			PRIMARY KEY  (id),
 			KEY status_created (status, created_at_gmt),
-			KEY created_at (created_at_gmt)
+			KEY created_at (created_at_gmt),
+			KEY catalog_key_status_created (catalog_key, status, created_at_gmt)
 		) {$charset_collate};";
 
 		dbDelta( $sql );
+		update_option( self::SCHEMA_OPTION_NAME, self::SCHEMA_VERSION, false );
 	}
 
 	/**
@@ -87,6 +107,9 @@ final class Catalog_Repository {
 					'is_client_specific'   => 0,
 					'tax_mode'             => 'including',
 					'discount_percent'     => 0,
+					'is_automatic'         => 0,
+					'catalog_key'          => '',
+					'source_signature'     => '',
 					'include_out_of_stock' => 0,
 					'excluded_category_ids' => array(),
 					'attribute_columns'    => array(),
@@ -206,6 +229,79 @@ final class Catalog_Repository {
 		return false !== $result;
 	}
 
+	public static function delete( int $record_id ): bool {
+		global $wpdb;
+
+		if ( $record_id < 1 || ! $wpdb instanceof wpdb ) {
+			return false;
+		}
+
+		$result = $wpdb->delete( self::table_name(), array( 'id' => $record_id ), array( '%d' ) );
+
+		return false !== $result;
+	}
+
+	/**
+	 * @return array<string,mixed>|null
+	 */
+	public static function get_latest_completed_by_catalog_key( string $catalog_key ): ?array {
+		global $wpdb;
+
+		$catalog_key = sanitize_key( $catalog_key );
+		if ( '' === $catalog_key || ! $wpdb instanceof wpdb ) {
+			return null;
+		}
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT * FROM ' . self::table_name() . ' WHERE catalog_key = %s AND status = %s ORDER BY created_at_gmt DESC LIMIT 1',
+				$catalog_key,
+				'completed'
+			),
+			ARRAY_A
+		);
+
+		return is_array( $row ) ? self::normalize_row( $row ) : null;
+	}
+
+	public static function has_pending_by_catalog_key( string $catalog_key ): bool {
+		global $wpdb;
+
+		$catalog_key = sanitize_key( $catalog_key );
+		if ( '' === $catalog_key || ! $wpdb instanceof wpdb ) {
+			return false;
+		}
+
+		$count = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM ' . self::table_name() . ' WHERE catalog_key = %s AND status IN (%s, %s)',
+				$catalog_key,
+				'queued',
+				'processing'
+			)
+		);
+
+		return (int) $count > 0;
+	}
+
+	public static function count_pending(): int {
+		global $wpdb;
+
+		if ( ! $wpdb instanceof wpdb ) {
+			return 0;
+		}
+
+		$count = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM ' . self::table_name() . ' WHERE status IN (%s, %s)',
+				'queued',
+				'processing'
+			)
+		);
+
+		return (int) $count;
+	}
+
 	/**
 	 * @param array<string,mixed> $row
 	 * @return array<string,mixed>
@@ -222,6 +318,7 @@ final class Catalog_Repository {
 
 		$row['id']                   = isset( $row['id'] ) ? (int) $row['id'] : 0;
 		$row['is_client_specific']   = ! empty( $row['is_client_specific'] );
+		$row['is_automatic']         = ! empty( $row['is_automatic'] );
 		$row['include_out_of_stock'] = ! empty( $row['include_out_of_stock'] );
 		$row['discount_percent']     = isset( $row['discount_percent'] ) ? (float) $row['discount_percent'] : 0.0;
 		$row['product_count']        = isset( $row['product_count'] ) ? (int) $row['product_count'] : 0;
@@ -242,5 +339,17 @@ final class Catalog_Repository {
 		}
 
 		return $fields;
+	}
+
+	private static function table_exists( string $table_name ): bool {
+		global $wpdb;
+
+		if ( ! $wpdb instanceof wpdb || '' === $table_name ) {
+			return false;
+		}
+
+		$found_table_name = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_name ) );
+
+		return is_string( $found_table_name ) && $found_table_name === $table_name;
 	}
 }

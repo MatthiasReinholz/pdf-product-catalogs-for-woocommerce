@@ -114,7 +114,8 @@ final class Admin_Page {
 		$settings          = Settings::get_all();
 		$attribute_options = Settings::get_attribute_column_options();
 		$category_options  = Settings::get_category_options();
-		$records           = Catalog_Repository::get_recent( 20 );
+		$records           = Catalog_Repository::get_recent( 50 );
+		$featured_record   = Catalog_Repository::get_latest_completed_by_catalog_key( Catalog_Repository::AUTO_STANDARD_KEY );
 
 		echo '<div class="wrap ppcfw-admin-wrap">';
 		echo '<h1>' . esc_html__( 'PDF Product Catalogs', 'pdf-product-catalogs-for-woocommerce' ) . '</h1>';
@@ -123,7 +124,7 @@ final class Admin_Page {
 		self::render_flash_notice();
 		self::render_generation_panel();
 		self::render_settings_form( $settings, $attribute_options, $category_options );
-		self::render_history_table( $records );
+		self::render_history_table( $records, is_array( $featured_record ) ? $featured_record : null );
 		self::render_generate_modal();
 		echo '</div>';
 	}
@@ -137,6 +138,10 @@ final class Admin_Page {
 
 		if ( ! Plugin::is_woocommerce_available() ) {
 			self::redirect_with_notice( 'missing-woocommerce' );
+		}
+
+		if ( Catalog_Repository::count_pending() >= 10 ) {
+			self::redirect_with_notice( 'too-many-pending' );
 		}
 
 		$catalog_type = isset( $_POST['catalog_type'] ) ? sanitize_key( wp_unslash( $_POST['catalog_type'] ) ) : 'standard';
@@ -196,6 +201,39 @@ final class Admin_Page {
 		}
 
 		Storage::stream_pdf_file( $absolute_path, $file_name );
+	}
+
+	public static function handle_delete(): void {
+		if ( ! current_user_can( Plugin::CAPABILITY ) ) {
+			wp_die( esc_html__( 'You do not have permission to perform this action.', 'pdf-product-catalogs-for-woocommerce' ) );
+		}
+
+		$record_id = isset( $_GET['record_id'] ) ? absint( $_GET['record_id'] ) : 0;
+		check_admin_referer( 'ppcfw_delete_catalog:' . $record_id );
+
+		$record = Catalog_Repository::get( $record_id );
+		if ( ! is_array( $record ) || $record_id < 1 ) {
+			self::redirect_with_notice( 'delete-failed' );
+		}
+
+		$status = isset( $record['status'] ) ? (string) $record['status'] : '';
+		if ( in_array( $status, array( 'queued', 'processing' ), true ) ) {
+			self::redirect_with_notice( 'delete-not-allowed' );
+		}
+
+		$relative_path = isset( $record['file_relative_path'] ) ? (string) $record['file_relative_path'] : '';
+		if ( '' !== $relative_path ) {
+			$absolute_path = Storage::absolute_path_from_relative( $relative_path );
+			if ( '' !== $absolute_path && ! Storage::delete_private_file( $absolute_path ) ) {
+				self::redirect_with_notice( 'delete-failed' );
+			}
+		}
+
+		if ( ! Catalog_Repository::delete( $record_id ) ) {
+			self::redirect_with_notice( 'delete-failed' );
+		}
+
+		self::redirect_with_notice( 'deleted' );
 	}
 
 	public static function handle_status_poll(): void {
@@ -271,6 +309,22 @@ final class Admin_Page {
 				$class   = 'notice-error';
 				$message = __( 'The catalog could not be queued for generation.', 'pdf-product-catalogs-for-woocommerce' );
 				break;
+			case 'too-many-pending':
+				$class   = 'notice-error';
+				$message = __( 'Too many catalogs are already queued or processing. Please wait for some to finish before generating another.', 'pdf-product-catalogs-for-woocommerce' );
+				break;
+			case 'deleted':
+				$class   = 'notice-success';
+				$message = __( 'The catalog record and its PDF file were deleted.', 'pdf-product-catalogs-for-woocommerce' );
+				break;
+			case 'delete-not-allowed':
+				$class   = 'notice-error';
+				$message = __( 'Queued or processing catalogs cannot be deleted yet.', 'pdf-product-catalogs-for-woocommerce' );
+				break;
+			case 'delete-failed':
+				$class   = 'notice-error';
+				$message = __( 'The catalog could not be deleted.', 'pdf-product-catalogs-for-woocommerce' );
+				break;
 		}
 
 		if ( '' === $message ) {
@@ -330,6 +384,16 @@ final class Admin_Page {
 		echo '</tr>';
 
 		echo '<tr>';
+		echo '<th scope="row">' . esc_html__( 'Automatic standard catalog', 'pdf-product-catalogs-for-woocommerce' ) . '</th>';
+		echo '<td>';
+		echo '<label><input type="checkbox" name="' . esc_attr( Settings::OPTION_NAME ) . '[enable_daily_automatic_catalog]" value="1" ' . checked( ! empty( $settings['enable_daily_automatic_catalog'] ), true, false ) . ' /> ';
+		echo esc_html__( 'Generate or refresh one standard catalog automatically once per day when product data or relevant settings changed.', 'pdf-product-catalogs-for-woocommerce' ) . '</label>';
+		echo '<p class="description">' . esc_html__( 'The auto-updated standard catalog uses the standard flow with prices including tax and no client discount.', 'pdf-product-catalogs-for-woocommerce' ) . '</p>';
+		echo '<p class="description"><strong>' . esc_html__( 'Status:', 'pdf-product-catalogs-for-woocommerce' ) . '</strong> ' . esc_html( self::get_auto_refresh_status_label( ! empty( $settings['enable_daily_automatic_catalog'] ) ) ) . '</p>';
+		echo '</td>';
+		echo '</tr>';
+
+		echo '<tr>';
 		echo '<th scope="row"><label for="ppcfw-excluded-categories">' . esc_html__( 'Excluded product categories', 'pdf-product-catalogs-for-woocommerce' ) . '</label></th>';
 		echo '<td>';
 		echo '<select id="ppcfw-excluded-categories" name="' . esc_attr( Settings::OPTION_NAME ) . '[excluded_category_ids][]" multiple="multiple" size="8" class="ppcfw-multi-select">';
@@ -365,7 +429,7 @@ final class Admin_Page {
 	/**
 	 * @param array<int,array<string,mixed>> $records
 	 */
-	private static function render_history_table( array $records ): void {
+	private static function render_history_table( array $records, ?array $featured_record ): void {
 		echo '<div class="ppcfw-panel">';
 		echo '<h2>' . esc_html__( 'Generated catalog history', 'pdf-product-catalogs-for-woocommerce' ) . '</h2>';
 
@@ -373,6 +437,17 @@ final class Admin_Page {
 			echo '<p>' . esc_html__( 'No product catalogs have been generated yet.', 'pdf-product-catalogs-for-woocommerce' ) . '</p>';
 			echo '</div>';
 			return;
+		}
+
+		if ( is_array( $featured_record ) && isset( $featured_record['id'] ) ) {
+			$featured_id = (int) $featured_record['id'];
+			$records     = array_values(
+				array_filter(
+					$records,
+					static fn ( array $record ): bool => (int) ( $record['id'] ?? 0 ) !== $featured_id
+				)
+			);
+			array_unshift( $records, $featured_record );
 		}
 
 		echo '<table class="widefat striped ppcfw-history-table">';
@@ -393,10 +468,17 @@ final class Admin_Page {
 			$pricing   = self::build_pricing_summary( $record );
 			$products  = isset( $record['product_count'] ) ? (int) $record['product_count'] : 0;
 			$generated = self::format_datetime( isset( $record['created_at_gmt'] ) ? (string) $record['created_at_gmt'] : '' );
+			$is_featured = is_array( $featured_record ) && $record_id === (int) ( $featured_record['id'] ?? 0 );
+			$is_automatic = ! empty( $record['is_automatic'] ) && Catalog_Repository::AUTO_STANDARD_KEY === (string) ( $record['catalog_key'] ?? '' );
 
-			echo '<tr data-record-id="' . esc_attr( (string) $record_id ) . '" data-record-status="' . esc_attr( $status ) . '">';
+			echo '<tr class="' . esc_attr( $is_featured ? 'ppcfw-history-table__row--featured' : '' ) . '" data-record-id="' . esc_attr( (string) $record_id ) . '" data-record-status="' . esc_attr( $status ) . '">';
 			echo '<td>';
 			echo '<strong>' . esc_html( $title ) . '</strong>';
+			if ( $is_featured ) {
+				echo ' <span class="ppcfw-history-badge ppcfw-history-badge--featured">' . esc_html__( 'Current auto-updated standard catalog', 'pdf-product-catalogs-for-woocommerce' ) . '</span>';
+			} elseif ( $is_automatic ) {
+				echo ' <span class="ppcfw-history-badge">' . esc_html__( 'Auto-updated standard catalog', 'pdf-product-catalogs-for-woocommerce' ) . '</span>';
+			}
 			if ( '' !== $file_name ) {
 				echo '<div class="description">' . esc_html( $file_name ) . '</div>';
 			}
@@ -413,6 +495,9 @@ final class Admin_Page {
 			echo '<td class="ppcfw-actions-cell">';
 			if ( 'completed' === $status ) {
 				echo '<a class="button button-secondary" href="' . esc_url( self::get_download_url( $record_id ) ) . '">' . esc_html__( 'Download PDF', 'pdf-product-catalogs-for-woocommerce' ) . '</a>';
+				echo ' <a class="button button-link-delete" href="' . esc_url( self::get_delete_url( $record_id ) ) . '" onclick="return confirm(\'' . esc_js( __( 'Delete this catalog file and remove it from history?', 'pdf-product-catalogs-for-woocommerce' ) ) . '\');">' . esc_html__( 'Delete', 'pdf-product-catalogs-for-woocommerce' ) . '</a>';
+			} elseif ( 'failed' === $status ) {
+				echo '<a class="button button-link-delete" href="' . esc_url( self::get_delete_url( $record_id ) ) . '" onclick="return confirm(\'' . esc_js( __( 'Delete this catalog entry from history?', 'pdf-product-catalogs-for-woocommerce' ) ) . '\');">' . esc_html__( 'Delete', 'pdf-product-catalogs-for-woocommerce' ) . '</a>';
 			} else {
 				echo '<span class="description">' . esc_html__( 'Waiting for generation', 'pdf-product-catalogs-for-woocommerce' ) . '</span>';
 			}
@@ -437,36 +522,40 @@ final class Admin_Page {
 		echo '<input type="hidden" name="action" value="ppcfw_generate_catalog" />';
 		wp_nonce_field( 'ppcfw_generate_catalog' );
 
-		echo '<div class="ppcfw-wizard-step is-active" data-step="1">';
-		echo '<h3>' . esc_html__( 'Step 1 of 4: Catalog type', 'pdf-product-catalogs-for-woocommerce' ) . '</h3>';
+		echo '<div class="ppcfw-wizard-step is-active" data-step="1" data-flow="all">';
+		echo '<h3>' . esc_html__( 'Catalog type', 'pdf-product-catalogs-for-woocommerce' ) . '</h3>';
 		echo '<label class="ppcfw-choice"><input type="radio" name="catalog_type" value="standard" checked="checked" /> <span><strong>' . esc_html__( 'Standard catalog', 'pdf-product-catalogs-for-woocommerce' ) . '</strong><br />' . esc_html__( 'Create a general product catalog without client-specific branding.', 'pdf-product-catalogs-for-woocommerce' ) . '</span></label>';
 		echo '<label class="ppcfw-choice"><input type="radio" name="catalog_type" value="client-specific" /> <span><strong>' . esc_html__( 'Client-specific catalog', 'pdf-product-catalogs-for-woocommerce' ) . '</strong><br />' . esc_html__( 'Add a client name to the catalog heading and history entry.', 'pdf-product-catalogs-for-woocommerce' ) . '</span></label>';
 		echo '</div>';
 
-		echo '<div class="ppcfw-wizard-step" data-step="2">';
-		echo '<h3>' . esc_html__( 'Step 2 of 4: Client details', 'pdf-product-catalogs-for-woocommerce' ) . '</h3>';
+		echo '<div class="ppcfw-wizard-step" data-step="2" data-flow="client-specific">';
+		echo '<h3>' . esc_html__( 'Client details', 'pdf-product-catalogs-for-woocommerce' ) . '</h3>';
 		echo '<label for="ppcfw-client-name">' . esc_html__( 'Client name', 'pdf-product-catalogs-for-woocommerce' ) . '</label>';
 		echo '<input type="text" id="ppcfw-client-name" name="client_name" class="regular-text" placeholder="' . esc_attr__( 'Example Trading AG', 'pdf-product-catalogs-for-woocommerce' ) . '" />';
 		echo '<p class="description">' . esc_html__( 'Required only when you choose a client-specific catalog.', 'pdf-product-catalogs-for-woocommerce' ) . '</p>';
 		echo '</div>';
 
-		echo '<div class="ppcfw-wizard-step" data-step="3">';
-		echo '<h3>' . esc_html__( 'Step 3 of 4: Price display', 'pdf-product-catalogs-for-woocommerce' ) . '</h3>';
+		echo '<div class="ppcfw-wizard-step" data-step="3" data-flow="all">';
+		echo '<h3>' . esc_html__( 'Price display', 'pdf-product-catalogs-for-woocommerce' ) . '</h3>';
 		echo '<label class="ppcfw-choice"><input type="radio" name="tax_mode" value="including" checked="checked" /> <span>' . esc_html__( 'Show prices including tax', 'pdf-product-catalogs-for-woocommerce' ) . '</span></label>';
 		echo '<label class="ppcfw-choice"><input type="radio" name="tax_mode" value="excluding" /> <span>' . esc_html__( 'Show prices excluding tax', 'pdf-product-catalogs-for-woocommerce' ) . '</span></label>';
 		echo '</div>';
 
-		echo '<div class="ppcfw-wizard-step" data-step="4">';
-		echo '<h3>' . esc_html__( 'Step 4 of 4: Discount', 'pdf-product-catalogs-for-woocommerce' ) . '</h3>';
+		echo '<div class="ppcfw-wizard-step" data-step="4" data-flow="client-specific">';
+		echo '<h3>' . esc_html__( 'Discount', 'pdf-product-catalogs-for-woocommerce' ) . '</h3>';
 		echo '<label for="ppcfw-discount-percent">' . esc_html__( 'Client discount percent', 'pdf-product-catalogs-for-woocommerce' ) . '</label>';
 		echo '<input type="number" id="ppcfw-discount-percent" name="discount_percent" class="small-text" min="0" max="100" step="0.01" value="0" />';
 		echo '<p class="description">' . esc_html__( 'Use 0 for no discount. The discount is applied to the displayed catalog prices only for this generated PDF.', 'pdf-product-catalogs-for-woocommerce' ) . '</p>';
 		echo '</div>';
 
 		echo '<div class="ppcfw-modal__footer">';
+		echo '<div class="ppcfw-modal__footer-secondary">';
 		echo '<button type="button" class="button button-secondary ppcfw-step-back" disabled="disabled">' . esc_html__( 'Back', 'pdf-product-catalogs-for-woocommerce' ) . '</button>';
+		echo '</div>';
+		echo '<div class="ppcfw-modal__footer-primary">';
 		echo '<button type="button" class="button button-primary ppcfw-step-next">' . esc_html__( 'Next', 'pdf-product-catalogs-for-woocommerce' ) . '</button>';
 		echo '<button type="submit" class="button button-primary ppcfw-submit-catalog" hidden>' . esc_html__( 'Generate PDF Catalog', 'pdf-product-catalogs-for-woocommerce' ) . '</button>';
+		echo '</div>';
 		echo '</div>';
 
 		echo '</form>';
@@ -490,15 +579,24 @@ final class Admin_Page {
 	}
 
 	private static function get_download_url( int $record_id ): string {
-		return wp_nonce_url(
-			add_query_arg(
-				array(
-					'action'    => 'ppcfw_download_catalog',
-					'record_id' => $record_id,
-				),
-				admin_url( 'admin-post.php' )
+		return add_query_arg(
+			array(
+				'action'    => 'ppcfw_download_catalog',
+				'record_id' => $record_id,
+				'_wpnonce'  => wp_create_nonce( 'ppcfw_download_catalog:' . $record_id ),
 			),
-			'ppcfw_download_catalog:' . $record_id
+			admin_url( 'admin-post.php' )
+		);
+	}
+
+	private static function get_delete_url( int $record_id ): string {
+		return add_query_arg(
+			array(
+				'action'    => 'ppcfw_delete_catalog',
+				'record_id' => $record_id,
+				'_wpnonce'  => wp_create_nonce( 'ppcfw_delete_catalog:' . $record_id ),
+			),
+			admin_url( 'admin-post.php' )
 		);
 	}
 
@@ -551,5 +649,31 @@ final class Admin_Page {
 		}
 
 		return wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $timestamp );
+	}
+
+	private static function get_auto_refresh_status_label( bool $enabled ): string {
+		if ( ! $enabled ) {
+			return __( 'Disabled.', 'pdf-product-catalogs-for-woocommerce' );
+		}
+
+		$timestamp = false;
+
+		if ( function_exists( 'as_next_scheduled_action' ) ) {
+			$timestamp = as_next_scheduled_action( Plugin::AUTO_REFRESH_HOOK, array(), Plugin::ASYNC_GROUP );
+		}
+
+		if ( false === $timestamp ) {
+			$timestamp = wp_next_scheduled( Plugin::AUTO_REFRESH_HOOK );
+		}
+
+		if ( false === $timestamp || ! is_numeric( $timestamp ) ) {
+			return __( 'Enabled, but no future automatic refresh is currently scheduled yet. Save settings again if this persists.', 'pdf-product-catalogs-for-woocommerce' );
+		}
+
+		return sprintf(
+			/* translators: %s next scheduled datetime */
+			__( 'Enabled. Next scheduled refresh check: %s', 'pdf-product-catalogs-for-woocommerce' ),
+			wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), (int) $timestamp )
+		);
 	}
 }

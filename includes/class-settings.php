@@ -12,14 +12,16 @@ if ( ! defined( 'ABSPATH' ) ) {
 final class Settings {
 	public const OPTION_NAME = 'ppcfw_settings';
 	public const SECRET_OPTION_NAME = 'ppcfw_storage_secret';
+	public const KEY_OPTION_NAME = 'ppcfw_storage_key';
 
 	public static function defaults(): array {
 		return array(
-			'header_text'          => '',
-			'footer_text'          => '',
-			'include_out_of_stock' => false,
-			'excluded_category_ids' => array(),
-			'attribute_columns'    => array(),
+			'header_text'                   => '',
+			'footer_text'                   => '',
+			'include_out_of_stock'          => false,
+			'excluded_category_ids'         => array(),
+			'attribute_columns'             => array(),
+			'enable_daily_automatic_catalog' => false,
 		);
 	}
 
@@ -56,11 +58,12 @@ final class Settings {
 		$defaults = self::defaults();
 
 		$sanitized = array(
-			'header_text'           => isset( $input['header_text'] ) ? wp_kses_post( (string) $input['header_text'] ) : $defaults['header_text'],
-			'footer_text'           => isset( $input['footer_text'] ) ? wp_kses_post( (string) $input['footer_text'] ) : $defaults['footer_text'],
-			'include_out_of_stock'  => ! empty( $input['include_out_of_stock'] ),
-			'excluded_category_ids' => array(),
-			'attribute_columns'     => array(),
+			'header_text'                    => isset( $input['header_text'] ) ? wp_kses_post( (string) $input['header_text'] ) : $defaults['header_text'],
+			'footer_text'                    => isset( $input['footer_text'] ) ? wp_kses_post( (string) $input['footer_text'] ) : $defaults['footer_text'],
+			'include_out_of_stock'           => ! empty( $input['include_out_of_stock'] ),
+			'excluded_category_ids'          => array(),
+			'attribute_columns'              => array(),
+			'enable_daily_automatic_catalog' => ! empty( $input['enable_daily_automatic_catalog'] ),
 		);
 
 		$valid_category_ids = array();

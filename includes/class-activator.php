@@ -16,9 +16,10 @@ final class Activator {
 			);
 		}
 
-		Settings::maybe_initialize();
-		Catalog_Repository::maybe_create_table();
-		Storage::ensure_secret();
-		Storage::ensure_storage_dir();
+			Settings::maybe_initialize();
+			Catalog_Repository::maybe_create_table();
+			Storage::ensure_secret();
+			Storage::ensure_storage_dir();
+			Plugin::sync_auto_refresh_schedule();
+		}
 	}
-}

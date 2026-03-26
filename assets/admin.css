@@ -26,6 +26,26 @@
 	vertical-align: top;
 }
 
+.ppcfw-history-table__row--featured td {
+	background: #f7fbff;
+}
+
+.ppcfw-history-badge {
+	display: inline-block;
+	margin-top: 4px;
+	padding: 3px 8px;
+	border-radius: 999px;
+	background: #e5eef6;
+	color: #334e68;
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.ppcfw-history-badge--featured {
+	background: #dbeafe;
+	color: #1d4ed8;
+}
+
 .ppcfw-status {
 	display: inline-block;
 	padding: 4px 8px;
@@ -58,6 +78,12 @@
 	display: none;
 }
 
+.ppcfw-wizard-step[hidden],
+.ppcfw-step-next[hidden],
+.ppcfw-submit-catalog[hidden] {
+	display: none !important;
+}
+
 .ppcfw-modal {
 	position: fixed;
 	inset: 0;
@@ -86,6 +112,18 @@
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
+}
+
+.ppcfw-modal__footer-secondary,
+.ppcfw-modal__footer-primary {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.ppcfw-modal__footer-primary {
+	margin-left: auto;
+	justify-content: flex-end;
 }
 
 .ppcfw-wizard-step {
@@ -120,6 +158,15 @@ body.ppcfw-modal-open {
 	.ppcfw-modal__footer {
 		flex-direction: column;
 		align-items: stretch;
+	}
+
+	.ppcfw-modal__footer-secondary,
+	.ppcfw-modal__footer-primary {
+		width: 100%;
+	}
+
+	.ppcfw-modal__footer-primary {
+		margin-left: 0;
 	}
 
 	.ppcfw-modal__dialog {
