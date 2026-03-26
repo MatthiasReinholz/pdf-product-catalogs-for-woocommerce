@@ -4,8 +4,8 @@ Requires Plugins: woocommerce
 Requires at least: 6.8
 Requires PHP: 8.0
 Tested up to: 6.8
-Version: 0.1.0
-Stable tag: 0.1.0
+Version: 0.0.1
+Stable tag: 0.0.1
 License: GPLv3 or later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -25,6 +25,13 @@ Each catalog is generated from live WooCommerce product data and stored in a pro
 4. Configure the catalog defaults and generate your first PDF.
 
 == Changelog ==
+
+= 0.0.1 =
+* update license
+* chore(deps): bump shivammathur/setup-php
+* chore(deps): bump actions/checkout from 5.0.1 to 6.0.2
+* initial commit
+
 
 = 0.1.0 =
 * Initial release.
