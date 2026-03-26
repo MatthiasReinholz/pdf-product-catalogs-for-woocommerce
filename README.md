@@ -46,6 +46,14 @@ This plugin is useful when you need one or more of the following:
 - Stores generated files as encrypted private blobs instead of directly downloadable public PDFs
 - Uses batched product loading and resized image sources to stay more reliable on large catalogs
 
+## Fonts And Third-Party Components
+
+The PDF output uses the bundled `Inter` font files from [`assets/fonts`](./assets/fonts) via local `@font-face` declarations and a matching Dompdf default font. This is the right approach for reliable PDF rendering because it avoids remote font fetching and makes output deterministic across environments.
+
+The bundled Inter font is licensed under the SIL Open Font License 1.1, and the plugin includes the required license text in [`assets/fonts/LICENSE-Inter.txt`](./assets/fonts/LICENSE-Inter.txt). That license permits bundling and embedding the font in generated documents.
+
+This repository also ships third-party libraries used for PDF rendering and HTML/CSS parsing. Their licenses remain separate from the plugin's GPLv3 license. See [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md) for a concise inventory and the license-file locations shipped in the repository.
+
 ## What The PDF Contains
 
 The generated PDF is built from WooCommerce product data and current plugin settings.
@@ -167,6 +175,15 @@ This makes the plugin substantially safer for large stores, although PDF generat
 - WordPress 6.8+
 - PHP 8.0+
 - WooCommerce installed and active
+
+### Background Processing Requirements
+
+This plugin depends on WordPress background job execution for reliable operation.
+
+- WooCommerce normally provides Action Scheduler, which the plugin uses for asynchronous catalog generation and the daily automatic standard-catalog refresh checks.
+- WordPress cron must be functional. If scheduled jobs are not running, queued catalogs will stay queued and automatic daily refreshes will not happen.
+- On low-traffic or production sites, a real server cron that triggers WordPress regularly is preferable to relying only on visitor-triggered WP-Cron.
+- If Action Scheduler is unavailable, the plugin falls back to synchronous generation for manual runs and standard WordPress cron for the daily automatic refresh, but that is a less robust operating mode.
 
 ### Boundaries
 

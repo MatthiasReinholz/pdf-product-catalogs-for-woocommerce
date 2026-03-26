@@ -60,6 +60,14 @@ Variable products are rendered as grouped rows in the main table, with one row p
 - Admin-only downloads with nonce and capability checks
 - Batched product loading and smaller embedded images for improved reliability on large catalogs
 
+== Fonts And Third-Party Components ==
+
+The plugin bundles the `Inter` font locally for reliable PDF rendering. It does not fetch fonts from a remote service during generation.
+
+The Inter font files are included under the SIL Open Font License 1.1, and the license text ships with the plugin in `assets/fonts/LICENSE-Inter.txt`.
+
+The plugin also includes third-party libraries for PDF rendering and HTML/CSS parsing. Their license texts are included in the bundled `vendor/` directories. See `THIRD_PARTY_NOTICES.md` in the repository for a concise inventory of bundled components and license locations.
+
 == Security And Storage ==
 
 Catalog files are not stored as plain public PDFs.
@@ -93,6 +101,15 @@ To reduce memory pressure and failed generation jobs, it:
 - prefers smaller local thumbnail assets instead of original full-size images
 - skips oversized image files that would destabilize PDF rendering
 - generates catalogs asynchronously instead of tying work to a normal page request
+
+== Background Processing Requirements ==
+
+This plugin depends on scheduled WordPress background jobs.
+
+- WooCommerce normally provides Action Scheduler, which the plugin uses for queued catalog generation and the daily automatic standard-catalog refresh checks.
+- WordPress cron must be working. If scheduled jobs do not run, queued catalogs will remain queued and automatic refreshes will not happen.
+- On low-traffic or production sites, a real server cron that triggers WordPress regularly is preferable to relying only on visitor-triggered WP-Cron.
+- If Action Scheduler is unavailable, the plugin falls back to synchronous generation for manual runs and standard WordPress cron for the daily automatic refresh, but that is a less robust setup.
 
 == Installation ==
 
