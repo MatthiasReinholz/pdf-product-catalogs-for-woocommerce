@@ -1,0 +1,133 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing release tag in x.y.z format'
+        required: true
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: write
+      pull-requests: read
+    env:
+      WP_ORG_DEPLOY_ENABLED: ${{ vars.WP_ORG_DEPLOY_ENABLED }}
+
+    steps:
+      - name: Validate target version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ inputs.version }}"
+
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must use x.y.z format." >&2
+            exit 1
+          fi
+
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ steps.version.outputs.value }}
+          fetch-depth: 0
+
+      - name: Read config
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source .wp-plugin-base.env
+          set +a
+          : "${PLUGIN_SLUG:?PLUGIN_SLUG is required}"
+          : "${PLUGIN_NAME:?PLUGIN_NAME is required}"
+          : "${ZIP_FILE:?ZIP_FILE is required}"
+          : "${PHP_VERSION:?PHP_VERSION is required}"
+          : "${NODE_VERSION:?NODE_VERSION is required}"
+          echo "plugin_slug=${PLUGIN_SLUG}" >> "$GITHUB_OUTPUT"
+          echo "zip_file=${ZIP_FILE}" >> "$GITHUB_OUTPUT"
+          echo "php_version=${PHP_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "node_version=${NODE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "wordpress_org_slug=${WORDPRESS_ORG_SLUG:-}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@fcafdd6392932010c2bd5094439b8e33be2a8a09
+        with:
+          php-version: ${{ steps.config.outputs.php_version }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: ${{ steps.config.outputs.node_version }}
+
+      - name: Verify release tag comes from a merged release PR
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          COMMIT_SHA="$(git rev-parse HEAD)"
+          bash .wp-plugin-base/scripts/ci/check_release_pr.sh "${GITHUB_REPOSITORY}" "${{ steps.version.outputs.value }}" "$COMMIT_SHA"
+
+      - name: Validate tag and metadata versions
+        run: bash .wp-plugin-base/scripts/ci/check_versions.sh "${{ steps.version.outputs.value }}"
+
+      - name: Lint PHP
+        run: bash .wp-plugin-base/scripts/ci/lint_php.sh
+
+      - name: Lint JavaScript
+        run: bash .wp-plugin-base/scripts/ci/lint_js.sh
+
+      - name: Build package
+        run: bash .wp-plugin-base/scripts/ci/build_zip.sh
+
+      - name: Generate GitHub release body
+        run: bash .wp-plugin-base/scripts/release/generate_github_release_body.sh "${{ steps.version.outputs.value }}" > dist/release-body.md
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: ${{ steps.config.outputs.plugin_slug }}-${{ steps.version.outputs.value }}
+          path: dist/${{ steps.config.outputs.zip_file }}
+          if-no-files-found: error
+
+      - name: Validate WordPress.org deploy configuration
+        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' }}
+        run: |
+          if [ -z "${{ steps.config.outputs.wordpress_org_slug }}" ]; then
+            echo "WORDPRESS_ORG_SLUG must be set in .wp-plugin-base.env when WP_ORG_DEPLOY_ENABLED=true." >&2
+            exit 1
+          fi
+
+      - name: Install Subversion
+        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' }}
+        run: sudo apt-get update && sudo apt-get install -y subversion
+
+      - name: Deploy to WordPress.org
+        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' }}
+        uses: 10up/action-wordpress-plugin-deploy@54bd289b8525fd23a5c365ec369185f2966529c2
+        with:
+          generate-zip: false
+        env:
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SOURCE_DIR: ./
+          SLUG: ${{ steps.config.outputs.wordpress_org_slug }}
+          VERSION: ${{ steps.version.outputs.value }}
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe
+        with:
+          tag_name: ${{ steps.version.outputs.value }}
+          body_path: dist/release-body.md
+          files: dist/${{ steps.config.outputs.zip_file }}

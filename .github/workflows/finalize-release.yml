@@ -1,0 +1,147 @@
+name: finalize-release
+
+on:
+  pull_request_target:
+    types:
+      - closed
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  release:
+    name: Publish merged release
+    if: >
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (startsWith(github.event.pull_request.head.ref, 'release/') || startsWith(github.event.pull_request.head.ref, 'hotfix/'))
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+    environment: production
+    env:
+      WP_ORG_DEPLOY_ENABLED: ${{ vars.WP_ORG_DEPLOY_ENABLED }}
+
+    steps:
+      - name: Derive release version
+        id: release
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          if [[ "$HEAD_REF" =~ ^(release|hotfix)/([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "version=${BASH_REMATCH[2]}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Unsupported release branch: $HEAD_REF" >&2
+          exit 1
+
+      - name: Checkout merge commit
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - name: Read config
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -a
+          source .wp-plugin-base.env
+          set +a
+          : "${PLUGIN_SLUG:?PLUGIN_SLUG is required}"
+          : "${PLUGIN_NAME:?PLUGIN_NAME is required}"
+          : "${ZIP_FILE:?ZIP_FILE is required}"
+          : "${PHP_VERSION:?PHP_VERSION is required}"
+          : "${NODE_VERSION:?NODE_VERSION is required}"
+          echo "plugin_slug=${PLUGIN_SLUG}" >> "$GITHUB_OUTPUT"
+          echo "zip_file=${ZIP_FILE}" >> "$GITHUB_OUTPUT"
+          echo "php_version=${PHP_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "node_version=${NODE_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "wordpress_org_slug=${WORDPRESS_ORG_SLUG:-}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@fcafdd6392932010c2bd5094439b8e33be2a8a09
+        with:
+          php-version: ${{ steps.config.outputs.php_version }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: ${{ steps.config.outputs.node_version }}
+
+      - name: Validate metadata versions
+        run: bash .wp-plugin-base/scripts/ci/check_versions.sh "${{ steps.release.outputs.version }}"
+
+      - name: Lint PHP
+        run: bash .wp-plugin-base/scripts/ci/lint_php.sh
+
+      - name: Lint JavaScript
+        run: bash .wp-plugin-base/scripts/ci/lint_js.sh
+
+      - name: Build package
+        run: bash .wp-plugin-base/scripts/ci/build_zip.sh
+
+      - name: Generate GitHub release body
+        run: bash .wp-plugin-base/scripts/release/generate_github_release_body.sh "${{ steps.release.outputs.version }}" > dist/release-body.md
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: ${{ steps.config.outputs.plugin_slug }}-${{ steps.release.outputs.version }}
+          path: dist/${{ steps.config.outputs.zip_file }}
+          if-no-files-found: error
+
+      - name: Validate WordPress.org deploy configuration
+        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' }}
+        run: |
+          if [ -z "${{ steps.config.outputs.wordpress_org_slug }}" ]; then
+            echo "WORDPRESS_ORG_SLUG must be set in .wp-plugin-base.env when WP_ORG_DEPLOY_ENABLED=true." >&2
+            exit 1
+          fi
+
+      - name: Ensure tag does not already exist
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/${VERSION}" >/dev/null 2>&1; then
+            echo "Tag ${VERSION} already exists." >&2
+            exit 1
+          fi
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create annotated tag locally
+        run: git -c tag.gpgsign=false tag -a "${{ steps.release.outputs.version }}" -m "Release ${{ steps.release.outputs.version }}"
+
+      - name: Push tag
+        run: git push origin "${{ steps.release.outputs.version }}"
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe
+        with:
+          tag_name: ${{ steps.release.outputs.version }}
+          body_path: dist/release-body.md
+          files: dist/${{ steps.config.outputs.zip_file }}
+
+      - name: Install Subversion
+        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' }}
+        run: sudo apt-get update && sudo apt-get install -y subversion
+
+      - name: Deploy to WordPress.org
+        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' }}
+        uses: 10up/action-wordpress-plugin-deploy@54bd289b8525fd23a5c365ec369185f2966529c2
+        with:
+          generate-zip: false
+        env:
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SOURCE_DIR: ./
+          SLUG: ${{ steps.config.outputs.wordpress_org_slug }}
+          VERSION: ${{ steps.release.outputs.version }}

@@ -1,0 +1,13 @@
+/.wp-plugin-base
+/.wp-plugin-base.env
+/.wordpress-org
+/.git
+/.github
+/dist
+/node_modules
+/scripts
+/.distignore
+/.gitignore
+/CONTRIBUTING.md
+/README.md
+/tests

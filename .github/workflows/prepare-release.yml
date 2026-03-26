@@ -1,0 +1,162 @@
+name: prepare-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'How to derive the next release version'
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - custom
+      version:
+        description: 'Release version in x.y.z format when release type is custom'
+        required: false
+        type: string
+      base_ref:
+        description: 'Base branch for the release branch'
+        required: true
+        default: 'main'
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: prepare-release-${{ inputs.base_ref }}-${{ inputs.release_type }}-${{ inputs.version || 'auto' }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare release branch
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout base ref
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ inputs.base_ref }}
+          fetch-depth: 0
+
+      - name: Resolve target version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.release_type }}" = "custom" ]; then
+            if ! [[ "${{ inputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Custom version must use x.y.z format." >&2
+              exit 1
+            fi
+            echo "value=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          version="$(bash .wp-plugin-base/scripts/release/next_version.sh "${{ inputs.release_type }}")"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve source ref
+        id: source
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: release/${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+            api_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls?state=open&head=${GITHUB_REPOSITORY_OWNER}:${RELEASE_BRANCH}&base=${{ inputs.base_ref }}"
+            open_pr_count="$(
+              curl -fsSL \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "$api_url" \
+                | jq 'length'
+            )"
+
+            echo "branch_exists=true" >> "$GITHUB_OUTPUT"
+
+            if [ "$open_pr_count" -gt 0 ]; then
+              echo "ref=$RELEASE_BRANCH" >> "$GITHUB_OUTPUT"
+              echo "open_pr_exists=true" >> "$GITHUB_OUTPUT"
+              echo "Refreshing existing release branch $RELEASE_BRANCH."
+            else
+              echo "ref=${{ inputs.base_ref }}" >> "$GITHUB_OUTPUT"
+              echo "open_pr_exists=false" >> "$GITHUB_OUTPUT"
+              echo "Existing release branch $RELEASE_BRANCH has no open PR. Recreating it from ${{ inputs.base_ref }}."
+            fi
+          else
+            echo "ref=${{ inputs.base_ref }}" >> "$GITHUB_OUTPUT"
+            echo "branch_exists=false" >> "$GITHUB_OUTPUT"
+            echo "open_pr_exists=false" >> "$GITHUB_OUTPUT"
+            echo "Preparing a new release branch from ${{ inputs.base_ref }}."
+          fi
+
+      - name: Checkout source ref
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: ${{ steps.source.outputs.ref }}
+          fetch-depth: 0
+
+      - name: Bump release metadata
+        run: bash .wp-plugin-base/scripts/release/bump_version.sh "${{ steps.version.outputs.value }}"
+
+      - name: Create or update release pull request
+        id: cpr
+        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0
+        with:
+          branch: release/${{ steps.version.outputs.value }}
+          base: ${{ inputs.base_ref }}
+          commit-message: Release ${{ steps.version.outputs.value }}
+          title: Release ${{ steps.version.outputs.value }}
+          body: |
+            This PR was created by the local `prepare-release` workflow managed by `wp-plugin-base`.
+
+            Included changes:
+            - bump plugin metadata to `${{ steps.version.outputs.value }}`
+            - add auto-generated changelog notes for `${{ steps.version.outputs.value }}`
+            - update the release metadata based on the project config
+            - derive the version using release type `${{ inputs.release_type }}`
+
+            Automated checks on this PR:
+            - version metadata consistency
+            - release branch name matches the version bump
+            - release changelog section exists
+            - release changelog entry contains bullet items
+            - PHP and JavaScript syntax
+            - package build
+
+            After merge:
+            - the `finalize-release` workflow creates and pushes the annotated `${{ steps.version.outputs.value }}` tag automatically
+            - the same `finalize-release` workflow publishes the GitHub release and optionally deploys to WordPress.org
+          delete-branch: false
+
+      - name: Report prepare-release outcome
+        env:
+          BRANCH_EXISTS: ${{ steps.source.outputs.branch_exists }}
+          OPEN_PR_EXISTS: ${{ steps.source.outputs.open_pr_exists }}
+          PULL_REQUEST_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+          PULL_REQUEST_OPERATION: ${{ steps.cpr.outputs.pull-request-operation }}
+          PULL_REQUEST_URL: ${{ steps.cpr.outputs.pull-request-url }}
+          RELEASE_BRANCH: release/${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PULL_REQUEST_NUMBER" ]; then
+            echo "Release branch $RELEASE_BRANCH is ready."
+            echo "PR #$PULL_REQUEST_NUMBER ($PULL_REQUEST_OPERATION): $PULL_REQUEST_URL"
+            exit 0
+          fi
+
+          if [ "$BRANCH_EXISTS" = "true" ] && [ "$OPEN_PR_EXISTS" = "true" ]; then
+            echo "Release branch $RELEASE_BRANCH already existed and no additional PR update was required."
+          else
+            echo "Release branch $RELEASE_BRANCH was prepared, but no pull request was created. Check the create-pull-request step output." >&2
+            exit 1
+          fi
