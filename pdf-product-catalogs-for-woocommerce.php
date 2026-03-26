@@ -3,7 +3,7 @@
  * Plugin Name: PDF Product Catalogs for WooCommerce
  * Plugin URI: https://github.com/MatthiasReinholz/pdf-product-catalogs-for-woocommerce
  * Description: Generate secure, client-specific PDF product catalogs from WooCommerce product data.
- * Version: 0.1.0
+ * Version: 0.0.1
  * Author: Matthias Reinholz
  * Author URI: https://github.com/MatthiasReinholz
  * Text Domain: pdf-product-catalogs-for-woocommerce
@@ -19,7 +19,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_VERSION', '0.1.0' );
+define('PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_VERSION', '0.0.1');
 define( 'PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_SLUG', 'pdf-product-catalogs-for-woocommerce' );
 define( 'PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_FILE', __FILE__ );
 define( 'PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_DIR', plugin_dir_path( __FILE__ ) );
