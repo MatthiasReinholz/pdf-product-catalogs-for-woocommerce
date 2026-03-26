@@ -6,6 +6,8 @@ Standalone WordPress plugin repository for generating secure PDF product catalog
 
 This plugin adds a catalog-generation workspace under `Products > PDF Product Catalogs` in WooCommerce admin.
 
+After activation, go to `wp-admin > Products > PDF Product Catalogs`. The plugin does not add a top-level admin menu, so this is where you manage settings, generate catalogs, and download previous files.
+
 It is designed for stores that need downloadable product catalogs for internal sales work, B2B communication, client-specific quoting support, or regularly refreshed “current catalog” PDFs without exposing those files publicly on the web.
 
 The plugin can generate:
@@ -42,7 +44,6 @@ This plugin is useful when you need one or more of the following:
 - Supports an optional daily automatic refresh for one standard “main” catalog
 - Regenerates that automatic catalog only when relevant product data or catalog settings changed
 - Stores generated files as encrypted private blobs instead of directly downloadable public PDFs
-- Migrates legacy plaintext stored files forward in background batches
 - Uses batched product loading and resized image sources to stay more reliable on large catalogs
 
 ## What The PDF Contains
@@ -68,6 +69,16 @@ By default, the catalog can include:
 Variable products are rendered as grouped rows in the main table, with one row per visible variation.
 
 ## Admin Workflow
+
+### Where To Find It After Activation
+
+After you activate the plugin and WooCommerce is active, open `Products > PDF Product Catalogs` in wp-admin.
+
+That page contains everything for this plugin:
+
+- the modal wizard for creating new catalogs
+- the settings form for catalog defaults
+- the history list for downloading or deleting older catalogs
 
 ### 1. Configure Defaults
 

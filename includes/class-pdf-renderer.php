@@ -12,8 +12,8 @@ if ( ! defined( 'ABSPATH' ) ) {
 require_once PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_DIR . 'vendor/dompdf-autoload.php';
 pdf_product_catalogs_for_woocommerce_register_vendor_autoloader();
 
-final class Pdf_Renderer {
-	public static function render_html_file( string $html_path ): array {
+	final class Pdf_Renderer {
+		public static function render_html_file( string $html_path ): array {
 		if ( '' === $html_path || ! file_exists( $html_path ) ) {
 			return array(
 				'ok'    => false,
@@ -40,13 +40,13 @@ final class Pdf_Renderer {
 		$plugin_root = realpath( PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_DIR );
 		$dompdf_root = realpath( PDF_PRODUCT_CATALOGS_FOR_WOOCOMMERCE_DIR . 'vendor/dompdf/dompdf' );
 
-		$options = new Options();
-		$options->setIsRemoteEnabled( false );
-		$options->setIsHtml5ParserEnabled( true );
-		$options->setIsFontSubsettingEnabled( false );
-		$options->setDefaultFont( 'Inter' );
-		$options->setTempDir( $tmp_dir );
-		$options->setFontCache( $font_dir );
+			$options = new Options();
+			$options->setIsRemoteEnabled( false );
+			$options->setIsHtml5ParserEnabled( true );
+			$options->setIsFontSubsettingEnabled( true );
+			$options->setDefaultFont( 'Inter' );
+			$options->setTempDir( $tmp_dir );
+			$options->setFontCache( $font_dir );
 		$options->setFontDir( $font_dir );
 
 		if ( is_string( $dompdf_root ) && '' !== $dompdf_root ) {
@@ -67,21 +67,50 @@ final class Pdf_Renderer {
 		}
 
 		$dompdf = new Dompdf( $options );
-		$dompdf->loadHtmlFile( $html_path, 'UTF-8' );
-		$dompdf->setPaper( 'A4', 'portrait' );
-		$dompdf->render();
+			$dompdf->loadHtmlFile( $html_path, 'UTF-8' );
+			$dompdf->setPaper( 'A4', 'portrait' );
+			$dompdf->render();
 
-		$pdf_binary = $dompdf->output();
-		if ( ! is_string( $pdf_binary ) || '' === $pdf_binary ) {
+			$pdf_binary = $dompdf->output();
+			if ( ! is_string( $pdf_binary ) || '' === $pdf_binary ) {
 			return array(
 				'ok'    => false,
-				'error' => 'render-empty',
+					'error' => 'render-empty',
+				);
+			}
+
+			$pdf_path = self::create_temp_pdf_path( $tmp_dir );
+			if ( false === file_put_contents( $pdf_path, $pdf_binary ) ) {
+				wp_delete_file( $pdf_path );
+				return array(
+					'ok'    => false,
+					'error' => 'render-write-failed',
+				);
+			}
+
+			unset( $pdf_binary, $dompdf );
+			if ( function_exists( 'gc_collect_cycles' ) ) {
+				gc_collect_cycles();
+			}
+
+			return array(
+				'ok'   => true,
+				'path' => $pdf_path,
 			);
 		}
 
-		return array(
-			'ok'     => true,
-			'binary' => $pdf_binary,
-		);
+		private static function create_temp_pdf_path( string $tmp_dir ): string {
+			$temp_path = tempnam( $tmp_dir, 'catalog-pdf-' );
+			if ( false === $temp_path ) {
+				throw new \RuntimeException( 'pdf-tempnam-failed' );
+			}
+
+			$pdf_path = $temp_path . '.pdf';
+			if ( ! @rename( $temp_path, $pdf_path ) ) {
+				wp_delete_file( $temp_path );
+				throw new \RuntimeException( 'pdf-tempfile-rename-failed' );
+			}
+
+			return $pdf_path;
+		}
 	}
-}

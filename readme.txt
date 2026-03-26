@@ -15,6 +15,8 @@ Generate secure, branded PDF product catalogs from WooCommerce product data.
 
 PDF Product Catalogs for WooCommerce adds a dedicated catalog-generation page under `Products > PDF Product Catalogs` in wp-admin.
 
+After activation, go to `wp-admin > Products > PDF Product Catalogs`. The plugin does not add a top-level admin menu, so this submenu page is where you configure defaults, create catalogs, and access the catalog history.
+
 It is built for stores that need:
 
 - standard PDF catalogs based on live WooCommerce data
@@ -97,7 +99,7 @@ To reduce memory pressure and failed generation jobs, it:
 1. Upload `pdf-product-catalogs-for-woocommerce.zip` in WordPress.
 2. Activate the plugin.
 3. Ensure WooCommerce is active.
-4. Open `Products > PDF Product Catalogs`.
+4. Open `wp-admin > Products > PDF Product Catalogs`.
 5. Configure the catalog defaults.
 6. Generate your first standard or client-specific catalog.
 

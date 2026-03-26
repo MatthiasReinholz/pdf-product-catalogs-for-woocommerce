@@ -302,53 +302,6 @@ final class Catalog_Repository {
 		return (int) $count;
 	}
 
-	public static function has_legacy_storage_records(): bool {
-		global $wpdb;
-
-		if ( ! $wpdb instanceof wpdb ) {
-			return false;
-		}
-
-		$count = $wpdb->get_var(
-				$wpdb->prepare(
-					'SELECT COUNT(*) FROM ' . self::table_name() . ' WHERE status = %s AND file_relative_path <> %s AND file_relative_path NOT LIKE %s',
-					'completed',
-					'',
-					'%' . $wpdb->esc_like( '.ppcfw3bin' )
-				)
-			);
-
-		return (int) $count > 0;
-	}
-
-	/**
-	 * @return array<int,array<string,mixed>>
-	 */
-	public static function get_legacy_storage_records( int $limit = 10 ): array {
-		global $wpdb;
-
-		if ( ! $wpdb instanceof wpdb ) {
-			return array();
-		}
-
-		$rows = $wpdb->get_results(
-				$wpdb->prepare(
-					'SELECT * FROM ' . self::table_name() . ' WHERE status = %s AND file_relative_path <> %s AND file_relative_path NOT LIKE %s ORDER BY created_at_gmt DESC LIMIT %d',
-					'completed',
-					'',
-					'%' . $wpdb->esc_like( '.ppcfw3bin' ),
-					max( 1, $limit )
-				),
-			ARRAY_A
-		);
-
-		if ( ! is_array( $rows ) ) {
-			return array();
-		}
-
-		return array_map( array( self::class, 'normalize_row' ), $rows );
-	}
-
 	/**
 	 * @param array<string,mixed> $row
 	 * @return array<string,mixed>

@@ -52,11 +52,9 @@ delete_option( 'ppcfw_catalogs_schema_version' );
 $table_name = $wpdb->prefix . 'ppcfw_catalogs';
 $wpdb->query( "DROP TABLE IF EXISTS `{$table_name}`" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
-if ( function_exists( 'as_unschedule_all_actions' ) ) {
-	as_unschedule_all_actions( 'ppcfw_generate_catalog', array(), 'pdf-product-catalogs-for-woocommerce' );
-	as_unschedule_all_actions( 'ppcfw_daily_auto_refresh', array(), 'pdf-product-catalogs-for-woocommerce' );
-	as_unschedule_all_actions( 'ppcfw_migrate_storage_files', array(), 'pdf-product-catalogs-for-woocommerce' );
-}
+	if ( function_exists( 'as_unschedule_all_actions' ) ) {
+		as_unschedule_all_actions( 'ppcfw_generate_catalog', array(), 'pdf-product-catalogs-for-woocommerce' );
+		as_unschedule_all_actions( 'ppcfw_daily_auto_refresh', array(), 'pdf-product-catalogs-for-woocommerce' );
+	}
 
-wp_clear_scheduled_hook( 'ppcfw_daily_auto_refresh' );
-wp_clear_scheduled_hook( 'ppcfw_migrate_storage_files' );
+	wp_clear_scheduled_hook( 'ppcfw_daily_auto_refresh' );

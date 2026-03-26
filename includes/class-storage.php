@@ -8,15 +8,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class Storage {
 	private const STORAGE_EXTENSION         = '.ppcfw3bin';
-	private const LEGACY_STORAGE_EXTENSION  = '.ppcfwbin';
 	private const CURRENT_ENCRYPTION_MAGIC  = 'PPCFW3';
-	private const LEGACY_ENCRYPTION_MAGIC   = 'PPCFW1';
 	private const SECRETSTREAM_CHUNK_BYTES  = 1048576;
 	private const SECRETSTREAM_HEADER_BYTES = 24;
 	private const SECRETSTREAM_KEY_BYTES    = 32;
 	private const SECRETSTREAM_ABYTES       = 17;
-	private const LEGACY_NONCE_BYTES        = 12;
-	private const LEGACY_TAG_BYTES          = 16;
 
 	/**
 	 * @return array{basedir:string,dir:string}
@@ -139,35 +135,6 @@ final class Storage {
 		return trailingslashit( $storage['dir'] ) . sanitize_file_name( $file_name );
 	}
 
-	/**
-	 * @return array{ok:bool,path?:string,error?:string}
-	 */
-	public static function store_pdf_binary( int $record_id, string $pdf_binary, string $download_name ): array {
-		if ( '' === $pdf_binary ) {
-			return array(
-				'ok'    => false,
-				'error' => 'empty-pdf-binary',
-			);
-		}
-
-		self::ensure_storage_dir();
-
-		$storage_file_name = self::build_storage_file_name( $record_id, $download_name );
-		$absolute_path     = self::absolute_path_for_file_name( $storage_file_name );
-
-		if ( ! self::encrypt_pdf_binary_to_file( $pdf_binary, $absolute_path ) ) {
-			return array(
-				'ok'    => false,
-				'error' => 'encryption-failed',
-			);
-		}
-
-		return array(
-			'ok'   => true,
-			'path' => $absolute_path,
-		);
-	}
-
 	public static function relative_path_from_absolute( string $absolute_path ): string {
 		$upload  = wp_upload_dir( null, false );
 		$basedir = isset( $upload['basedir'] ) ? trailingslashit( (string) $upload['basedir'] ) : '';
@@ -203,47 +170,7 @@ final class Storage {
 	}
 
 	public static function is_encrypted_storage_path( string $relative_path ): bool {
-		$relative_path = strtolower( $relative_path );
-
-		return str_ends_with( $relative_path, self::STORAGE_EXTENSION ) || str_ends_with( $relative_path, self::LEGACY_STORAGE_EXTENSION );
-	}
-
-	public static function has_unencrypted_storage_files(): bool {
-		return Catalog_Repository::has_legacy_storage_records();
-	}
-
-	public static function maybe_schedule_legacy_file_migration(): void {
-		if ( ! function_exists( 'as_enqueue_async_action' ) || ! function_exists( 'as_next_scheduled_action' ) ) {
-			static $ran_fallback_batch = false;
-			if ( ! $ran_fallback_batch && self::has_unencrypted_storage_files() ) {
-				$ran_fallback_batch = true;
-				self::migrate_legacy_storage_batch();
-			}
-
-			return;
-		}
-
-		if ( ! self::has_unencrypted_storage_files() ) {
-			return;
-		}
-
-		if ( false !== as_next_scheduled_action( Plugin::STORAGE_MIGRATION_HOOK, array(), Plugin::ASYNC_GROUP ) ) {
-			return;
-		}
-
-		as_enqueue_async_action( Plugin::STORAGE_MIGRATION_HOOK, array(), Plugin::ASYNC_GROUP );
-	}
-
-	public static function migrate_legacy_storage_batch(): void {
-		$records = Catalog_Repository::get_legacy_storage_records( 10 );
-
-		foreach ( $records as $record ) {
-			self::migrate_legacy_record( $record );
-		}
-
-		if ( self::has_unencrypted_storage_files() && function_exists( 'as_enqueue_async_action' ) ) {
-			as_enqueue_async_action( Plugin::STORAGE_MIGRATION_HOOK, array(), Plugin::ASYNC_GROUP );
-		}
+		return str_ends_with( strtolower( $relative_path ), self::STORAGE_EXTENSION );
 	}
 
 	public static function stream_pdf_file( string $absolute_path, string $download_name ): void {
@@ -285,6 +212,35 @@ final class Storage {
 		return wp_delete_file( $absolute_path );
 	}
 
+	/**
+	 * @return array{ok:bool,path?:string,error?:string}
+	 */
+	public static function store_pdf_file( int $record_id, string $source_path, string $download_name ): array {
+		if ( '' === $source_path || ! file_exists( $source_path ) ) {
+			return array(
+				'ok'    => false,
+				'error' => 'missing-pdf-file',
+			);
+		}
+
+		self::ensure_storage_dir();
+
+		$storage_file_name = self::build_storage_file_name( $record_id, $download_name );
+		$absolute_path     = self::absolute_path_for_file_name( $storage_file_name );
+
+		if ( ! self::encrypt_pdf_file_to_file( $source_path, $absolute_path ) ) {
+			return array(
+				'ok'    => false,
+				'error' => 'encryption-failed',
+			);
+		}
+
+		return array(
+			'ok'   => true,
+			'path' => $absolute_path,
+		);
+	}
+
 	private static function get_secret(): string {
 		$secret = get_option( Settings::SECRET_OPTION_NAME, '' );
 		$secret = is_string( $secret ) ? trim( $secret ) : '';
@@ -302,156 +258,6 @@ final class Storage {
 		$decoded = base64_decode( $key, true );
 
 		return is_string( $decoded ) ? $decoded : '';
-	}
-
-	private static function encrypt_pdf_binary_to_file( string $pdf_binary, string $absolute_path ): bool {
-		if ( ! function_exists( 'sodium_crypto_secretstream_xchacha20poly1305_init_push' ) ) {
-			return false;
-		}
-
-		$key = self::get_current_encryption_key();
-		if ( strlen( $key ) !== self::SECRETSTREAM_KEY_BYTES ) {
-			return false;
-		}
-
-		$directory = dirname( $absolute_path );
-		if ( ! is_dir( $directory ) && ! wp_mkdir_p( $directory ) ) {
-			return false;
-		}
-
-		$handle = fopen( $absolute_path, 'wb' );
-		if ( false === $handle ) {
-			return false;
-		}
-
-		try {
-			list( $state, $header ) = sodium_crypto_secretstream_xchacha20poly1305_init_push( $key );
-			if ( false === fwrite( $handle, self::CURRENT_ENCRYPTION_MAGIC . $header ) ) {
-				fclose( $handle );
-				wp_delete_file( $absolute_path );
-				return false;
-			}
-
-			$offset = 0;
-			$length = strlen( $pdf_binary );
-
-			do {
-				$chunk = substr( $pdf_binary, $offset, self::SECRETSTREAM_CHUNK_BYTES );
-				$offset += strlen( $chunk );
-
-				$tag = $offset >= $length
-					? SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL
-					: SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE;
-				$encrypted_chunk = sodium_crypto_secretstream_xchacha20poly1305_push( $state, $chunk, '', $tag );
-
-				if ( false === fwrite( $handle, $encrypted_chunk ) ) {
-					fclose( $handle );
-					wp_delete_file( $absolute_path );
-					return false;
-				}
-			} while ( $offset < $length );
-		} catch ( \Throwable $throwable ) {
-			fclose( $handle );
-			wp_delete_file( $absolute_path );
-			return false;
-		}
-
-		fclose( $handle );
-
-		return true;
-	}
-
-	private static function read_pdf_binary( string $absolute_path ) {
-		if ( ! file_exists( $absolute_path ) ) {
-			return false;
-		}
-
-		$contents = file_get_contents( $absolute_path );
-		if ( ! is_string( $contents ) || '' === $contents ) {
-			return false;
-		}
-
-		return self::decrypt_pdf_binary( $contents );
-	}
-
-	private static function decrypt_pdf_binary( string $contents ) {
-		if ( str_starts_with( $contents, '%PDF-' ) ) {
-			return $contents;
-		}
-
-		if ( str_starts_with( $contents, self::CURRENT_ENCRYPTION_MAGIC ) ) {
-			return false;
-		}
-
-		if ( ! str_starts_with( $contents, self::LEGACY_ENCRYPTION_MAGIC ) || ! function_exists( 'openssl_decrypt' ) ) {
-			return false;
-		}
-
-		$offset = strlen( self::LEGACY_ENCRYPTION_MAGIC );
-		$nonce  = substr( $contents, $offset, self::LEGACY_NONCE_BYTES );
-		$tag    = substr( $contents, $offset + self::LEGACY_NONCE_BYTES, self::LEGACY_TAG_BYTES );
-		$data   = substr( $contents, $offset + self::LEGACY_NONCE_BYTES + self::LEGACY_TAG_BYTES );
-
-		if ( ! is_string( $nonce ) || strlen( $nonce ) !== self::LEGACY_NONCE_BYTES || ! is_string( $tag ) || strlen( $tag ) !== self::LEGACY_TAG_BYTES || ! is_string( $data ) || '' === $data ) {
-			return false;
-		}
-
-		foreach ( self::get_legacy_decryption_keys() as $key ) {
-			$plaintext = openssl_decrypt(
-				$data,
-				'aes-256-gcm',
-				$key,
-				OPENSSL_RAW_DATA,
-				$nonce,
-				$tag
-			);
-
-			if ( is_string( $plaintext ) && '' !== $plaintext ) {
-				return $plaintext;
-			}
-		}
-
-		return false;
-	}
-
-	/**
-	 * @param array<string,mixed> $record
-	 */
-	private static function migrate_legacy_record( array $record ): void {
-		$record_id     = isset( $record['id'] ) ? (int) $record['id'] : 0;
-		$relative_path = isset( $record['file_relative_path'] ) ? (string) $record['file_relative_path'] : '';
-		$download_name = isset( $record['file_name'] ) ? (string) $record['file_name'] : '';
-		$absolute_path = self::absolute_path_from_relative( $relative_path );
-
-		if ( $record_id < 1 || '' === $relative_path || '' === $absolute_path || ! self::is_path_in_storage_dir( $absolute_path ) || self::is_encrypted_storage_path( $relative_path ) ) {
-			return;
-		}
-
-		$pdf_binary = self::read_pdf_binary( $absolute_path );
-		if ( false === $pdf_binary ) {
-			return;
-		}
-
-		if ( '' === $download_name ) {
-			$download_name = basename( $relative_path );
-		}
-
-		$stored = self::store_pdf_binary( $record_id, $pdf_binary, $download_name );
-		if ( empty( $stored['ok'] ) || empty( $stored['path'] ) ) {
-			return;
-		}
-
-		$new_absolute_path = (string) $stored['path'];
-		Catalog_Repository::update(
-			$record_id,
-			array(
-				'file_relative_path' => self::relative_path_from_absolute( $new_absolute_path ),
-			)
-		);
-
-		if ( $new_absolute_path !== $absolute_path ) {
-			self::delete_private_file( $absolute_path );
-		}
 	}
 
 	private static function write_protection_files( string $directory ): void {
@@ -481,32 +287,6 @@ final class Storage {
 				"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<configuration>\n  <system.webServer>\n    <directoryBrowse enabled=\"false\" />\n    <security>\n      <authorization>\n        <add accessType=\"Deny\" users=\"*\" />\n      </authorization>\n    </security>\n  </system.webServer>\n</configuration>\n"
 			);
 		}
-	}
-
-	/**
-	 * @return array<int,string>
-	 */
-	private static function get_legacy_decryption_keys(): array {
-		$keys = array();
-
-		$current_key = self::get_current_encryption_key();
-		if ( '' !== $current_key ) {
-			$keys[] = $current_key;
-		}
-
-		$legacy_key = hash( 'sha256', self::get_secret() . '|' . wp_salt( 'auth' ), true );
-		if ( '' !== $legacy_key ) {
-			$keys[] = $legacy_key;
-		}
-
-		return array_values(
-			array_unique(
-				array_filter(
-					$keys,
-					static fn ( $key ): bool => is_string( $key ) && '' !== $key
-				)
-			)
-		);
 	}
 
 	private static function get_current_format_content_length( string $absolute_path ): int {
@@ -545,9 +325,7 @@ final class Storage {
 			return self::get_current_format_content_length( $absolute_path );
 		}
 
-		$pdf_binary = self::read_pdf_binary( $absolute_path );
-
-		return is_string( $pdf_binary ) ? strlen( $pdf_binary ) : 0;
+		return 0;
 	}
 
 	private static function stream_decrypted_pdf( string $absolute_path ): bool {
@@ -563,14 +341,7 @@ final class Storage {
 			return self::stream_current_format_pdf( $absolute_path );
 		}
 
-		$pdf_binary = self::read_pdf_binary( $absolute_path );
-		if ( ! is_string( $pdf_binary ) || '' === $pdf_binary ) {
-			return false;
-		}
-
-		echo $pdf_binary; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped
-
-		return true;
+		return false;
 	}
 
 	private static function stream_current_format_pdf( string $absolute_path ): bool {
@@ -623,6 +394,79 @@ final class Storage {
 		}
 
 		fclose( $handle );
+
+		return true;
+	}
+
+	private static function encrypt_pdf_file_to_file( string $source_path, string $absolute_path ): bool {
+		if ( ! function_exists( 'sodium_crypto_secretstream_xchacha20poly1305_init_push' ) ) {
+			return false;
+		}
+
+		$key = self::get_current_encryption_key();
+		if ( strlen( $key ) !== self::SECRETSTREAM_KEY_BYTES ) {
+			return false;
+		}
+
+		$directory = dirname( $absolute_path );
+		if ( ! is_dir( $directory ) && ! wp_mkdir_p( $directory ) ) {
+			return false;
+		}
+
+		$source_handle = fopen( $source_path, 'rb' );
+		if ( false === $source_handle ) {
+			return false;
+		}
+
+		$target_handle = fopen( $absolute_path, 'wb' );
+		if ( false === $target_handle ) {
+			fclose( $source_handle );
+			return false;
+		}
+
+		try {
+			list( $state, $header ) = sodium_crypto_secretstream_xchacha20poly1305_init_push( $key );
+			if ( false === fwrite( $target_handle, self::CURRENT_ENCRYPTION_MAGIC . $header ) ) {
+				fclose( $source_handle );
+				fclose( $target_handle );
+				wp_delete_file( $absolute_path );
+				return false;
+			}
+
+			while ( ! feof( $source_handle ) ) {
+				$chunk = fread( $source_handle, self::SECRETSTREAM_CHUNK_BYTES );
+				if ( false === $chunk ) {
+					fclose( $source_handle );
+					fclose( $target_handle );
+					wp_delete_file( $absolute_path );
+					return false;
+				}
+
+				if ( '' === $chunk ) {
+					continue;
+				}
+
+				$tag = feof( $source_handle )
+					? SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_FINAL
+					: SODIUM_CRYPTO_SECRETSTREAM_XCHACHA20POLY1305_TAG_MESSAGE;
+				$encrypted_chunk = sodium_crypto_secretstream_xchacha20poly1305_push( $state, $chunk, '', $tag );
+
+				if ( false === fwrite( $target_handle, $encrypted_chunk ) ) {
+					fclose( $source_handle );
+					fclose( $target_handle );
+					wp_delete_file( $absolute_path );
+					return false;
+				}
+			}
+		} catch ( \Throwable $throwable ) {
+			fclose( $source_handle );
+			fclose( $target_handle );
+			wp_delete_file( $absolute_path );
+			return false;
+		}
+
+		fclose( $source_handle );
+		fclose( $target_handle );
 
 		return true;
 	}

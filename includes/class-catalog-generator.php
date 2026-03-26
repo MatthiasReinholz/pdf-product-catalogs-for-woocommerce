@@ -12,7 +12,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class Catalog_Generator {
 	private const PRODUCT_BATCH_SIZE = 100;
-	private const MAX_EMBEDDED_IMAGE_BYTES = 2097152;
+	private const MAX_EMBEDDED_IMAGE_BYTES = 1048576;
 
 	/**
 	 * @var array<int,string>
@@ -129,6 +129,8 @@ final class Catalog_Generator {
 	}
 
 	private static function process_record( int $record_id ): void {
+		self::prepare_runtime();
+
 		$record = Catalog_Repository::get( $record_id );
 		if ( null === $record ) {
 			return;
@@ -143,35 +145,37 @@ final class Catalog_Generator {
 		);
 
 		$html_path     = '';
+		$pdf_path      = '';
 		$product_count = 0;
 
 		try {
-			$html_result  = self::build_document_html_file( $record );
-			$html_path    = isset( $html_result['path'] ) ? (string) $html_result['path'] : '';
+			$html_result   = self::build_document_html_file( $record );
+			$html_path     = isset( $html_result['path'] ) ? (string) $html_result['path'] : '';
 			$product_count = isset( $html_result['product_count'] ) ? (int) $html_result['product_count'] : 0;
-			$file_name    = Storage::build_file_name( (string) $record['client_name'], (string) $record['created_at_gmt'] );
-			$result       = Pdf_Renderer::render_html_file( $html_path );
+			$file_name     = Storage::build_file_name( (string) $record['client_name'], (string) $record['created_at_gmt'] );
+			$result        = Pdf_Renderer::render_html_file( $html_path );
 
-			if ( empty( $result['ok'] ) || empty( $result['binary'] ) || ! is_string( $result['binary'] ) ) {
+			if ( empty( $result['ok'] ) || empty( $result['path'] ) || ! is_string( $result['path'] ) ) {
 				throw new \RuntimeException( isset( $result['error'] ) ? (string) $result['error'] : 'render-failed' );
 			}
 
-			$stored = Storage::store_pdf_binary( $record_id, $result['binary'], $file_name );
+			$pdf_path = $result['path'];
+			$stored   = Storage::store_pdf_file( $record_id, $pdf_path, $file_name );
 			if ( empty( $stored['ok'] ) || empty( $stored['path'] ) || ! is_string( $stored['path'] ) ) {
 				throw new \RuntimeException( isset( $stored['error'] ) ? (string) $stored['error'] : 'storage-failed' );
 			}
 
 			Catalog_Repository::update(
 				$record_id,
-				array(
-					'status'             => 'completed',
-					'file_relative_path' => Storage::relative_path_from_absolute( $stored['path'] ),
-					'file_name'          => $file_name,
-					'product_count'      => $product_count,
-					'completed_at_gmt'   => gmdate( 'Y-m-d H:i:s' ),
-					'error_message'      => '',
-				)
-			);
+					array(
+						'status'             => 'completed',
+						'file_relative_path' => Storage::relative_path_from_absolute( $stored['path'] ),
+						'file_name'          => $file_name,
+						'product_count'      => $product_count,
+						'completed_at_gmt'   => gmdate( 'Y-m-d H:i:s' ),
+						'error_message'      => '',
+					)
+				);
 		} catch ( \Throwable $throwable ) {
 			Catalog_Repository::update(
 				$record_id,
@@ -183,6 +187,10 @@ final class Catalog_Generator {
 		} finally {
 			if ( '' !== $html_path && file_exists( $html_path ) ) {
 				wp_delete_file( $html_path );
+			}
+
+			if ( '' !== $pdf_path && file_exists( $pdf_path ) ) {
+				wp_delete_file( $pdf_path );
 			}
 		}
 	}
@@ -353,23 +361,30 @@ final class Catalog_Generator {
 			'tax_mode'              => 'including',
 		);
 
-		$product_fingerprint = array();
-		self::walk_products(
-			$include_out_of_stock,
-			$excluded_categories,
-			static function ( WC_Product $product ) use ( &$product_fingerprint, $attribute_columns ): void {
-				$product_fingerprint[] = self::build_product_signature_payload( $product, $attribute_columns, 'including', 0.0 );
-			}
-		);
-
-		return sha1(
+		$hash = hash_init( 'sha1' );
+		hash_update(
+			$hash,
 			(string) wp_json_encode(
 				array(
 					'settings' => $settings_fingerprint,
-					'products' => $product_fingerprint,
 				)
 			)
 		);
+
+		self::walk_products(
+			$include_out_of_stock,
+			$excluded_categories,
+			static function ( WC_Product $product ) use ( &$hash, $attribute_columns ): void {
+				hash_update(
+					$hash,
+					"\n" . (string) wp_json_encode(
+						self::build_product_signature_payload( $product, $attribute_columns, 'including', 0.0 )
+					)
+				);
+			}
+		);
+
+		return hash_final( $hash );
 	}
 
 	private static function count_products( bool $include_out_of_stock, array $excluded_categories ): int {
@@ -386,18 +401,24 @@ final class Catalog_Generator {
 	 * @param array<int,int> $excluded_categories
 	 */
 	private static function walk_products( bool $include_out_of_stock, array $excluded_categories, callable $callback ): int {
-		$page      = 1;
 		$processed = 0;
+		$last_id   = 0;
 
 		do {
-			$product_ids = self::query_product_batch_ids( $page );
+			$product_ids = self::query_product_batch_ids_after( $last_id );
 			if ( empty( $product_ids ) ) {
 				break;
 			}
 
 			foreach ( $product_ids as $product_id ) {
+				$last_id = max( $last_id, $product_id );
+
 				$product = wc_get_product( $product_id );
 				if ( ! $product instanceof WC_Product ) {
+					continue;
+				}
+
+				if ( ! in_array( $product->get_type(), array( 'simple', 'variable', 'external' ), true ) ) {
 					continue;
 				}
 
@@ -417,7 +438,9 @@ final class Catalog_Generator {
 				$callback( $product );
 			}
 
-			++$page;
+			if ( function_exists( 'gc_collect_cycles' ) ) {
+				gc_collect_cycles();
+			}
 		} while ( count( $product_ids ) === self::PRODUCT_BATCH_SIZE );
 
 		return $processed;
@@ -426,16 +449,20 @@ final class Catalog_Generator {
 	/**
 	 * @return array<int,int>
 	 */
-	private static function query_product_batch_ids( int $page ): array {
-		$product_ids = wc_get_products(
-			array(
-				'status'  => 'publish',
-				'limit'   => self::PRODUCT_BATCH_SIZE,
-				'page'    => max( 1, $page ),
-				'return'  => 'ids',
-				'type'    => array( 'simple', 'variable', 'external' ),
-				'orderby' => 'title',
-				'order'   => 'ASC',
+	private static function query_product_batch_ids_after( int $last_id ): array {
+		global $wpdb;
+
+		if ( ! $wpdb instanceof \wpdb ) {
+			return array();
+		}
+
+			$product_ids = $wpdb->get_col( // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.PreparedSQL.NotPrepared
+				$wpdb->prepare(
+					"SELECT ID FROM {$wpdb->posts} WHERE post_type = %s AND post_status = %s AND ID > %d ORDER BY ID ASC LIMIT %d",
+					'product',
+				'publish',
+				max( 0, $last_id ),
+				self::PRODUCT_BATCH_SIZE
 			)
 		);
 
@@ -842,5 +869,17 @@ final class Catalog_Generator {
 		}
 
 		return $html_path;
+	}
+
+	private static function prepare_runtime(): void {
+		if ( function_exists( 'wp_raise_memory_limit' ) ) {
+			wp_raise_memory_limit( 'admin' );
+		}
+
+		if ( function_exists( 'wc_set_time_limit' ) ) {
+			wc_set_time_limit( 0 );
+		} elseif ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 0 ); // phpcs:ignore WordPress.PHP.NoSilencedErrors.Discouraged
+		}
 	}
 }

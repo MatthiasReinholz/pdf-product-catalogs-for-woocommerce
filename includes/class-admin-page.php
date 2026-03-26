@@ -579,28 +579,24 @@ final class Admin_Page {
 	}
 
 	private static function get_download_url( int $record_id ): string {
-		return wp_nonce_url(
-			add_query_arg(
-				array(
-					'action'    => 'ppcfw_download_catalog',
-					'record_id' => $record_id,
-				),
-				admin_url( 'admin-post.php' )
+		return add_query_arg(
+			array(
+				'action'    => 'ppcfw_download_catalog',
+				'record_id' => $record_id,
+				'_wpnonce'  => wp_create_nonce( 'ppcfw_download_catalog:' . $record_id ),
 			),
-			'ppcfw_download_catalog:' . $record_id
+			admin_url( 'admin-post.php' )
 		);
 	}
 
 	private static function get_delete_url( int $record_id ): string {
-		return wp_nonce_url(
-			add_query_arg(
-				array(
-					'action'    => 'ppcfw_delete_catalog',
-					'record_id' => $record_id,
-				),
-				admin_url( 'admin-post.php' )
+		return add_query_arg(
+			array(
+				'action'    => 'ppcfw_delete_catalog',
+				'record_id' => $record_id,
+				'_wpnonce'  => wp_create_nonce( 'ppcfw_delete_catalog:' . $record_id ),
 			),
-			'ppcfw_delete_catalog:' . $record_id
+			admin_url( 'admin-post.php' )
 		);
 	}
 

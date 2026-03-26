@@ -7,15 +7,14 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 final class Deactivator {
-	public static function deactivate( bool $network_wide ): void {
-		unset( $network_wide );
+		public static function deactivate( bool $network_wide ): void {
+			unset( $network_wide );
 
-		if ( function_exists( 'as_unschedule_all_actions' ) ) {
-			as_unschedule_all_actions( Plugin::ASYNC_ACTION, array(), Plugin::ASYNC_GROUP );
-			as_unschedule_all_actions( Plugin::AUTO_REFRESH_HOOK, array(), Plugin::ASYNC_GROUP );
-			as_unschedule_all_actions( Plugin::STORAGE_MIGRATION_HOOK, array(), Plugin::ASYNC_GROUP );
+			if ( function_exists( 'as_unschedule_all_actions' ) ) {
+				as_unschedule_all_actions( Plugin::ASYNC_ACTION, array(), Plugin::ASYNC_GROUP );
+				as_unschedule_all_actions( Plugin::AUTO_REFRESH_HOOK, array(), Plugin::ASYNC_GROUP );
+			}
+
+			wp_clear_scheduled_hook( Plugin::AUTO_REFRESH_HOOK );
 		}
-
-		wp_clear_scheduled_hook( Plugin::AUTO_REFRESH_HOOK );
 	}
-}
