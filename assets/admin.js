@@ -184,7 +184,11 @@
 
     const actionsCell = row.querySelector(".ppcfw-actions-cell");
     if (actionsCell && record.downloadUrl) {
-      actionsCell.innerHTML = `<a class="button button-secondary" href="${record.downloadUrl}">Download PDF</a>`;
+      const link = document.createElement("a");
+      link.className = "button button-secondary";
+      link.href = record.downloadUrl;
+      link.textContent = "Download PDF";
+      actionsCell.replaceChildren(link);
     }
   };
 

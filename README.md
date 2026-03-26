@@ -174,6 +174,12 @@ This makes the plugin substantially safer for large stores, although PDF generat
 
 The history table stores generation metadata such as status, client details, price mode, discount, settings snapshot, file location, product count, timestamps, and automatic-catalog signature data.
 
+When the plugin is deleted through the WordPress admin, all plugin data is removed: the catalog history table, plugin settings, stored encryption keys, and all generated catalog files. Deactivating the plugin does not remove data.
+
+## WooCommerce Dependency
+
+If WooCommerce is deactivated while the plugin is installed, the plugin stays inert and does not display its admin page. Existing catalog files and history remain intact and become available again once WooCommerce is reactivated.
+
 ## Development Workflow
 
 - Sync foundation-managed files: `bash .wp-plugin-base/scripts/update/sync_child_repo.sh`

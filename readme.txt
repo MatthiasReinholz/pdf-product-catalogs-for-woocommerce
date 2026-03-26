@@ -123,6 +123,14 @@ Yes. Completed or failed catalog entries can be removed from the history list by
 
 Yes. Variable products are shown as grouped rows, with one row per visible variation.
 
+= What happens if WooCommerce is deactivated after catalogs exist? =
+
+The plugin stays inert and does not display its admin page while WooCommerce is inactive. Existing catalog files and history remain intact. Once WooCommerce is reactivated, everything is available again as before.
+
+= What happens to my data when I uninstall this plugin? =
+
+When the plugin is deleted through the WordPress admin, all plugin data is removed. This includes the catalog history table, plugin settings, stored encryption keys, and all generated catalog files. Deactivating the plugin does not remove data.
+
 == Changelog ==
 
 = 0.0.1 =

@@ -26,6 +26,13 @@ final class Storage {
 		$basedir = isset( $upload['basedir'] ) ? (string) $upload['basedir'] : '';
 		$secret  = self::get_secret();
 
+		if ( '' === $basedir || '' === $secret ) {
+			return array(
+				'basedir' => $basedir,
+				'dir'     => '',
+			);
+		}
+
 		return array(
 			'basedir' => $basedir,
 			'dir'     => trailingslashit( $basedir ) . 'pdf-product-catalogs/private-' . sanitize_file_name( $secret ) . '/catalogs',
@@ -244,6 +251,8 @@ final class Storage {
 		header( 'Content-Type: application/pdf' );
 		header( 'X-Robots-Tag: noindex, nofollow' );
 		header( 'X-Content-Type-Options: nosniff' );
+		header( 'X-Frame-Options: DENY' );
+		header( 'Referrer-Policy: no-referrer' );
 		header(
 			sprintf(
 				'Content-Disposition: attachment; filename="%1$s"; filename*=UTF-8\'\'%2$s',
@@ -280,16 +289,10 @@ final class Storage {
 		$secret = get_option( Settings::SECRET_OPTION_NAME, '' );
 		$secret = is_string( $secret ) ? trim( $secret ) : '';
 
-		if ( '' === $secret ) {
-			$secret = substr( wp_hash( (string) home_url( '/' ) ), 0, 16 );
-		}
-
 		return $secret;
 	}
 
 	private static function get_current_encryption_key(): string {
-		self::ensure_key();
-
 		$key = get_option( Settings::KEY_OPTION_NAME, '' );
 		$key = is_string( $key ) ? trim( $key ) : '';
 		if ( '' === $key ) {

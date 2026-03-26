@@ -284,6 +284,24 @@ final class Catalog_Repository {
 		return (int) $count > 0;
 	}
 
+	public static function count_pending(): int {
+		global $wpdb;
+
+		if ( ! $wpdb instanceof wpdb ) {
+			return 0;
+		}
+
+		$count = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM ' . self::table_name() . ' WHERE status IN (%s, %s)',
+				'queued',
+				'processing'
+			)
+		);
+
+		return (int) $count;
+	}
+
 	public static function has_legacy_storage_records(): bool {
 		global $wpdb;
 

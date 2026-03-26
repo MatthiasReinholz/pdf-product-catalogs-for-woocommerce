@@ -140,6 +140,10 @@ final class Admin_Page {
 			self::redirect_with_notice( 'missing-woocommerce' );
 		}
 
+		if ( Catalog_Repository::count_pending() >= 10 ) {
+			self::redirect_with_notice( 'too-many-pending' );
+		}
+
 		$catalog_type = isset( $_POST['catalog_type'] ) ? sanitize_key( wp_unslash( $_POST['catalog_type'] ) ) : 'standard';
 		$client_name  = isset( $_POST['client_name'] ) ? sanitize_text_field( wp_unslash( $_POST['client_name'] ) ) : '';
 		$tax_mode     = isset( $_POST['tax_mode'] ) ? sanitize_key( wp_unslash( $_POST['tax_mode'] ) ) : 'including';
@@ -304,6 +308,10 @@ final class Admin_Page {
 			case 'generation-failed':
 				$class   = 'notice-error';
 				$message = __( 'The catalog could not be queued for generation.', 'pdf-product-catalogs-for-woocommerce' );
+				break;
+			case 'too-many-pending':
+				$class   = 'notice-error';
+				$message = __( 'Too many catalogs are already queued or processing. Please wait for some to finish before generating another.', 'pdf-product-catalogs-for-woocommerce' );
 				break;
 			case 'deleted':
 				$class   = 'notice-success';
