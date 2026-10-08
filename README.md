@@ -220,3 +220,19 @@ If WooCommerce is deactivated while the plugin is installed, the plugin stays in
 This repository is a `wp-plugin-base` child project pinned to foundation version `v1.2.1`.
 
 GitHub Releases are the primary distribution mechanism. The WordPress app consumes the release ZIP through the `wp-core-base` managed `github-release` dependency flow.
+
+## Foundation maintenance
+
+The complete vendored foundation is imported from signed release `v1.10.2`,
+commit `6c342a8f634c6a480ee78f6303118cea18b2356d`, through the trusted verified
+manual importer. Historical generated workflows were compared against their
+committed templates before explicit ownership reconciliation and regeneration.
+The resulting `.wp-plugin-base-automation.json` records managed file hashes;
+custom application source remains outside managed ownership.
+
+Scheduled foundation updates require a repository-scoped automation credential
+in `WP_PLUGIN_BASE_PR_TOKEN` with contents, pull-request and workflow write
+permissions. The normal `GITHUB_TOKEN` cannot publish workflow changes. Configure
+the secret through GitHub administration, then re-enable and run the scheduled
+updater. Manual source adoption does not repair missing credential permissions.
+Never store credentials in source or Git remotes.

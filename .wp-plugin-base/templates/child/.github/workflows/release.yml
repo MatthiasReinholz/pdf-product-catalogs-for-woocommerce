@@ -7,28 +7,51 @@ on:
         description: 'Existing release tag in x.y.z format'
         required: true
         type: string
+      repair_host_assets:
+        description: 'Rebuild and repair host assets (leave false for channel retries using published bytes)'
+        required: false
+        default: false
+        type: boolean
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  WP_PLUGIN_BASE_CONFIG: '.wp-plugin-base.env'
+  RELEASE_WORKFLOW_BRANCH: '__DEFAULT_BRANCH__'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: release-publication-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
   release:
+    if: ${{ github.ref == 'refs/heads/__DEFAULT_BRANCH__' }}
     name: Release
     runs-on: ubuntu-latest
-    environment: __PRODUCTION_ENVIRONMENT__
+    timeout-minutes: 60
     permissions:
       contents: write
       pull-requests: read
+      attestations: write
+      id-token: write
+    environment: __PRODUCTION_ENVIRONMENT__
     env:
       WP_ORG_DEPLOY_ENABLED: ${{ vars.WP_ORG_DEPLOY_ENABLED }}
+      WOOCOMMERCE_COM_DEPLOY_ENABLED: ${{ vars.WOOCOMMERCE_COM_DEPLOY_ENABLED }}
+      WP_PLUGIN_BASE_ALLOW_WPORG_TAG_REDEPLOY: ${{ vars.WP_PLUGIN_BASE_ALLOW_WPORG_TAG_REDEPLOY }}
 
     steps:
       - name: Validate target version
         id: version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          version="${{ inputs.version }}"
+          version="$INPUT_VERSION"
 
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Version must use x.y.z format." >&2
@@ -37,97 +60,242 @@ jobs:
 
           echo "value=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Verify target tag exists on origin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          # gh authenticates from the environment; API failures retain their
+          # HTTP error, so missing tags and inaccessible repositories differ.
+          gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" --jq '.ref' >/dev/null
+
+      - name: Checkout existing tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ steps.version.outputs.value }}
+          ref: refs/tags/${{ steps.version.outputs.value }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout current trusted release helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: '__DEFAULT_BRANCH__'
+          path: .wp-plugin-base-release-driver
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Isolate trusted release helpers from packaged source
+        run: |
+          mkdir -p "$RUNNER_TEMP/wp-plugin-base-release-driver"
+          cp -R .wp-plugin-base-release-driver/.wp-plugin-base/scripts "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts"
+          cp -R .wp-plugin-base-release-driver/.wp-plugin-base/docs "$RUNNER_TEMP/wp-plugin-base-release-driver/docs"
+          cp -R .wp-plugin-base-release-driver/.wp-plugin-base/tools "$RUNNER_TEMP/wp-plugin-base-release-driver/tools"
+          cp -R .wp-plugin-base-release-driver/.wp-plugin-base/templates "$RUNNER_TEMP/wp-plugin-base-release-driver/templates"
+          rm -rf .wp-plugin-base-release-driver
+
+      - name: Verify release tag is annotated
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          if [ "$(git cat-file -t "refs/tags/$VERSION")" != "tag" ]; then
+            echo "Tag $VERSION exists but is not an annotated tag." >&2
+            exit 1
+          fi
+
+      - name: Verify release tag comes from a merged release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          WP_PLUGIN_BASE_CONFIG=".wp-plugin-base.env" bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/ci/check_release_pr.sh" \
+            "$GITHUB_REPOSITORY" "$VERSION" "$(git rev-parse HEAD)" github "$GITHUB_API_URL"
 
       - name: Read config
         id: config
         shell: bash
+        run: bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/ci/write_config_outputs.sh" project ".wp-plugin-base.env" "$GITHUB_OUTPUT"
+
+      - name: Validate release automation context
+        env:
+          ALLOW_HISTORICAL_BRANCH: ${{ !inputs.repair_host_assets }}
         run: |
-          set -euo pipefail
-          set -a
-          source .wp-plugin-base.env
-          set +a
-          : "${PLUGIN_SLUG:?PLUGIN_SLUG is required}"
-          : "${PLUGIN_NAME:?PLUGIN_NAME is required}"
-          : "${ZIP_FILE:?ZIP_FILE is required}"
-          : "${PHP_VERSION:?PHP_VERSION is required}"
-          : "${NODE_VERSION:?NODE_VERSION is required}"
-          echo "plugin_slug=${PLUGIN_SLUG}" >> "$GITHUB_OUTPUT"
-          echo "zip_file=${ZIP_FILE}" >> "$GITHUB_OUTPUT"
-          echo "php_version=${PHP_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "node_version=${NODE_VERSION}" >> "$GITHUB_OUTPUT"
-          echo "wordpress_org_slug=${WORDPRESS_ORG_SLUG:-}" >> "$GITHUB_OUTPUT"
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/ci/check_release_context.sh" ".wp-plugin-base.env" "$RELEASE_WORKFLOW_BRANCH" "$ALLOW_HISTORICAL_BRANCH"
 
       - name: Set up PHP
-        uses: shivammathur/setup-php@fcafdd6392932010c2bd5094439b8e33be2a8a09
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
         with:
           php-version: ${{ steps.config.outputs.php_version }}
 
       - name: Set up Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: ${{ steps.config.outputs.node_version }}
 
-      - name: Verify release tag comes from a merged release PR
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+      - name: Capture legacy ownership for explicit host repair
+        if: ${{ inputs.repair_host_assets }}
         run: |
-          COMMIT_SHA="$(git rev-parse HEAD)"
-          bash .wp-plugin-base/scripts/ci/check_release_pr.sh "${GITHUB_REPOSITORY}" "${{ steps.version.outputs.value }}" "$COMMIT_SHA"
-
-      - name: Validate tag and metadata versions
-        run: bash .wp-plugin-base/scripts/ci/check_versions.sh "${{ steps.version.outputs.value }}"
-
-      - name: Lint PHP
-        run: bash .wp-plugin-base/scripts/ci/lint_php.sh
-
-      - name: Lint JavaScript
-        run: bash .wp-plugin-base/scripts/ci/lint_js.sh
-
-      - name: Build package
-        run: bash .wp-plugin-base/scripts/ci/build_zip.sh
-
-      - name: Generate GitHub release body
-        run: bash .wp-plugin-base/scripts/release/generate_github_release_body.sh "${{ steps.version.outputs.value }}" > dist/release-body.md
-
-      - name: Upload package artifact
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
-        with:
-          name: ${{ steps.config.outputs.plugin_slug }}-${{ steps.version.outputs.value }}
-          path: dist/${{ steps.config.outputs.zip_file }}
-          if-no-files-found: error
-
-      - name: Validate WordPress.org deploy configuration
-        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' }}
-        run: |
-          if [ -z "${{ steps.config.outputs.wordpress_org_slug }}" ]; then
-            echo "WORDPRESS_ORG_SLUG must be set in .wp-plugin-base.env when WP_ORG_DEPLOY_ENABLED=true." >&2
-            exit 1
+          if [ ! -f .wp-plugin-base-automation.json ]; then
+            bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/update/capture_automation_ownership.sh" ".wp-plugin-base.env"
           fi
 
+      - name: Validate WordPress readiness
+        if: ${{ inputs.repair_host_assets && steps.config.outputs.wordpress_readiness_enabled == 'true' }}
+        env:
+          WP_PLUGIN_BASE_PACKAGE_RESULT_FILE: ${{ runner.temp }}/wp-plugin-base-package-result
+          GH_TOKEN: ${{ github.token }}
+          WP_PLUGIN_BASE_STRICT_DEPLOY_ENV_PROTECTION: 'true'
+          WP_ORG_DEPLOY_ENABLED: ${{ env.WP_ORG_DEPLOY_ENABLED }}
+        run: bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/ci/validate_wordpress_readiness.sh" ".wp-plugin-base.env"
+
+      - name: Validate tag and metadata versions
+        if: ${{ inputs.repair_host_assets && steps.config.outputs.wordpress_readiness_enabled != 'true' }}
+        run: bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/ci/check_versions.sh" "${{ steps.version.outputs.value }}"
+
+      - name: Lint PHP
+        if: ${{ inputs.repair_host_assets && steps.config.outputs.wordpress_readiness_enabled != 'true' }}
+        run: bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/ci/lint_php.sh"
+
+      - name: Lint JavaScript
+        if: ${{ inputs.repair_host_assets && steps.config.outputs.wordpress_readiness_enabled != 'true' }}
+        run: bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/ci/lint_js.sh"
+
+      - name: Build package
+        if: ${{ inputs.repair_host_assets && steps.config.outputs.wordpress_readiness_enabled != 'true' }}
+        env:
+          WP_PLUGIN_BASE_PACKAGE_RESULT_FILE: ${{ runner.temp }}/wp-plugin-base-package-result
+        run: bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/ci/build_zip.sh"
+
+      - name: Generate GitHub release body
+        if: ${{ inputs.repair_host_assets }}
+        run: bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/generate_github_release_body.sh" "${{ steps.version.outputs.value }}" > dist/release-body.md
+
+      - name: Install SBOM and signing tools
+        run: |
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/install_release_security_tools.sh" "$RUNNER_TEMP/wp-plugin-base-release-tools"
+          echo "$RUNNER_TEMP/wp-plugin-base-release-tools" >> "$GITHUB_PATH"
+
+      - name: Restore verified published artifacts for channel retry
+        if: ${{ !inputs.repair_host_assets }}
+        env:
+          WP_PLUGIN_BASE_PACKAGE_RESULT_FILE: ${{ runner.temp }}/wp-plugin-base-package-result
+          GH_TOKEN: ${{ github.token }}
+        run: bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/restore_github_release_assets.sh" "${{ steps.version.outputs.value }}" ".wp-plugin-base.env"
+
+      - name: Capture verified package generation
+        id: package
+        run: |
+          set -euo pipefail
+          source "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/lib/package_generation.sh"
+          wp_plugin_base_capture_package "$RUNNER_TEMP/wp-plugin-base-package-result"
+          cat "$RUNNER_TEMP/wp-plugin-base-package-result" >> "$GITHUB_OUTPUT"
+          for key in DIR ZIP SBOM SIGNATURE DESCRIPTOR SHA256; do
+            name="WP_PLUGIN_BASE_PACKAGE_$key"
+            printf '%s=%s\n' "$name" "${!name}" >> "$GITHUB_ENV"
+          done
+
+      - name: Generate package SBOM
+        if: ${{ inputs.repair_host_assets }}
+        run: |
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/generate_sbom.sh" \
+            "$WP_PLUGIN_BASE_PACKAGE_DIR" \
+            "$WP_PLUGIN_BASE_PACKAGE_SBOM"
+
+      - name: Sign release package
+        if: ${{ inputs.repair_host_assets }}
+        run: |
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/sign_release.sh" \
+            "$WP_PLUGIN_BASE_PACKAGE_ZIP" \
+            "$WP_PLUGIN_BASE_PACKAGE_SIGNATURE"
+
+      - name: Verify signing identity before publication
+        if: ${{ inputs.repair_host_assets }}
+        run: |
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/verify_sigstore_bundle.sh" \
+            "$GITHUB_REPOSITORY" \
+            "$WP_PLUGIN_BASE_PACKAGE_ZIP" \
+            "$WP_PLUGIN_BASE_PACKAGE_SIGNATURE" \
+            plugin github-release "$GITHUB_API_URL" "" "" "$RELEASE_WORKFLOW_BRANCH"
+
+      - name: Upload package artifact
+        if: ${{ inputs.repair_host_assets }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ steps.config.outputs.plugin_slug }}-${{ steps.version.outputs.value }}
+          path: ${{ steps.package.outputs.zip_path }}
+          if-no-files-found: error
+
+      - name: Attest package provenance
+        if: ${{ inputs.repair_host_assets }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: ${{ steps.package.outputs.zip_path }}
+
+      - name: Validate WordPress.org deploy configuration
+        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' && env.WP_PLUGIN_BASE_ALLOW_WPORG_TAG_REDEPLOY == 'true' }}
+        run: bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/validate_wordpress_org_deploy.sh" "${{ steps.version.outputs.value }}" ".wp-plugin-base.env" "$WP_PLUGIN_BASE_PACKAGE_DIR"
+
+      - name: Validate WooCommerce.com deploy configuration
+        if: ${{ env.WOOCOMMERCE_COM_DEPLOY_ENABLED == 'true' }}
+        env:
+          WOO_COM_USERNAME: ${{ secrets.WOO_COM_USERNAME }}
+          WOO_COM_APP_PASSWORD: ${{ secrets.WOO_COM_APP_PASSWORD }}
+        run: bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/validate_woocommerce_com_deploy.sh" "${{ steps.version.outputs.value }}" ".wp-plugin-base.env" "$WP_PLUGIN_BASE_PACKAGE_DIR"
+
+      - name: Report skipped WordPress.org redeploy
+        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' && env.WP_PLUGIN_BASE_ALLOW_WPORG_TAG_REDEPLOY != 'true' }}
+        run: echo "Manual release recovery skips WordPress.org redeploy unless WP_PLUGIN_BASE_ALLOW_WPORG_TAG_REDEPLOY=true is set for an intentional repair of the latest repository release tag."
+
       - name: Install Subversion
-        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' }}
+        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' && env.WP_PLUGIN_BASE_ALLOW_WPORG_TAG_REDEPLOY == 'true' }}
         run: sudo apt-get update && sudo apt-get install -y subversion
 
+      - name: Create GitHub release
+        if: ${{ inputs.repair_host_assets }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/publish_github_release.sh" --repair \
+            "${{ steps.version.outputs.value }}" \
+            "${{ steps.version.outputs.value }}" \
+            dist/release-body.md \
+            "$WP_PLUGIN_BASE_PACKAGE_ZIP" \
+            "$WP_PLUGIN_BASE_PACKAGE_SBOM" \
+            "$WP_PLUGIN_BASE_PACKAGE_SIGNATURE"
+
+      - name: Verify GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+          ZIP_FILE: ${{ steps.config.outputs.zip_file }}
+        run: |
+          set -euo pipefail
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/verify_github_release_assets.sh" \
+            "$VERSION" \
+            false \
+            "$WP_PLUGIN_BASE_PACKAGE_ZIP" \
+            "$WP_PLUGIN_BASE_PACKAGE_SBOM" \
+            "$WP_PLUGIN_BASE_PACKAGE_SIGNATURE"
+
       - name: Deploy to WordPress.org
-        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' }}
-        uses: 10up/action-wordpress-plugin-deploy@54bd289b8525fd23a5c365ec369185f2966529c2
-        with:
-          generate-zip: false
+        if: ${{ env.WP_ORG_DEPLOY_ENABLED == 'true' && env.WP_PLUGIN_BASE_ALLOW_WPORG_TAG_REDEPLOY == 'true' }}
         env:
           SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
           SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
-          SOURCE_DIR: ./
-          SLUG: ${{ steps.config.outputs.wordpress_org_slug }}
-          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/deploy_wordpress_org.sh" \
+            "${{ steps.version.outputs.value }}" \
+            ".wp-plugin-base.env" \
+            "$WP_PLUGIN_BASE_PACKAGE_DIR"
 
-      - name: Create GitHub release
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe
-        with:
-          tag_name: ${{ steps.version.outputs.value }}
-          body_path: dist/release-body.md
-          files: dist/${{ steps.config.outputs.zip_file }}
+      - name: Deploy to WooCommerce.com Marketplace
+        if: ${{ env.WOOCOMMERCE_COM_DEPLOY_ENABLED == 'true' && steps.config.outputs.woocommerce_com_product_id != '' }}
+        env:
+          WOO_COM_USERNAME: ${{ secrets.WOO_COM_USERNAME }}
+          WOO_COM_APP_PASSWORD: ${{ secrets.WOO_COM_APP_PASSWORD }}
+        run: |
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/deploy_woocommerce_com.sh" \
+            "${{ steps.version.outputs.value }}" \
+            ".wp-plugin-base.env" \
+            "$WP_PLUGIN_BASE_PACKAGE_ZIP"

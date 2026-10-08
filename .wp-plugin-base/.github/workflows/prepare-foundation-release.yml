@@ -27,8 +27,8 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
+  pull-requests: read
 
 concurrency:
   group: prepare-foundation-release-${{ inputs.base_ref }}-${{ inputs.release_type }}-${{ inputs.version || 'auto' }}
@@ -38,13 +38,43 @@ jobs:
   prepare:
     name: Prepare foundation release branch
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
 
     steps:
+      - name: Validate base ref
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$BASE_REF" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] ||
+            [[ "$BASE_REF" == refs/* ]] ||
+            [[ "$BASE_REF" == pull/* ]] ||
+            [[ "$BASE_REF" == *'/pull/'* ]] ||
+            [[ "$BASE_REF" == *..* ]] ||
+            [[ "$BASE_REF" == *"//"* ]]; then
+            echo "Unsupported release base ref: $BASE_REF" >&2
+            exit 1
+          fi
+
+          if [ "$BASE_REF" != "main" ]; then
+            encoded_ref="$(jq -nr --arg value "$BASE_REF" '$value|@uri')"
+            protected="$(gh api "repos/${GITHUB_REPOSITORY}/branches/${encoded_ref}" --jq '.protected')"
+            if [ "$protected" != "true" ]; then
+              echo "Release base ref $BASE_REF must be main or a protected branch." >&2
+              exit 1
+            fi
+          fi
+
       - name: Checkout base ref
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.base_ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Resolve target version
         id: version
@@ -67,76 +97,77 @@ jobs:
       - name: Resolve source ref
         id: source
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
           RELEASE_BRANCH: release/${{ steps.version.outputs.value }}
         run: |
-          set -euo pipefail
-          if git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
-            api_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls?state=open&head=${GITHUB_REPOSITORY_OWNER}:${RELEASE_BRANCH}&base=${{ inputs.base_ref }}"
-            open_pr_count="$(
-              curl -fsSL \
-                -H "Accept: application/vnd.github+json" \
-                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-                -H "X-GitHub-Api-Version: 2022-11-28" \
-                "$api_url" \
-                | jq 'length'
-            )"
-
-            echo "branch_exists=true" >> "$GITHUB_OUTPUT"
-
-            if [ "$open_pr_count" -gt 0 ]; then
-              echo "ref=$RELEASE_BRANCH" >> "$GITHUB_OUTPUT"
-              echo "open_pr_exists=true" >> "$GITHUB_OUTPUT"
-              echo "Refreshing existing release branch $RELEASE_BRANCH."
-            else
-              echo "ref=${{ inputs.base_ref }}" >> "$GITHUB_OUTPUT"
-              echo "open_pr_exists=false" >> "$GITHUB_OUTPUT"
-              echo "Existing release branch $RELEASE_BRANCH has no open PR. Recreating it from ${{ inputs.base_ref }}."
-            fi
-          else
-            echo "ref=${{ inputs.base_ref }}" >> "$GITHUB_OUTPUT"
-            echo "branch_exists=false" >> "$GITHUB_OUTPUT"
-            echo "open_pr_exists=false" >> "$GITHUB_OUTPUT"
-            echo "Preparing a new release branch from ${{ inputs.base_ref }}."
-          fi
+          bash scripts/update/resolve_release_branch_source.sh \
+            "${GITHUB_REPOSITORY}" \
+            "${GITHUB_REPOSITORY_OWNER}" \
+            "$RELEASE_BRANCH" \
+            "${{ inputs.base_ref }}" \
+            "$GITHUB_OUTPUT"
 
       - name: Checkout source ref
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ steps.source.outputs.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Bump foundation version metadata
         run: bash scripts/foundation/bump_version.sh "${{ steps.version.outputs.value }}"
 
+      - name: Validate release version contracts
+        run: |
+          bash scripts/foundation/check_version.sh "${{ steps.version.outputs.value }}"
+          bash scripts/foundation/check_version_contract_surfaces.sh "${{ steps.version.outputs.value }}"
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Write release pull request body
+        run: |
+          cat > "$RUNNER_TEMP/foundation-release-pr.md" <<'EOF'
+          This PR was created by the `prepare-foundation-release` workflow.
+
+          Included changes:
+          - bump `VERSION` to `${{ steps.version.outputs.value }}`
+          - add generated release notes to `CHANGELOG.md`
+          - prepare the repository for the foundation release tag
+
+          Automated checks on this PR:
+          - foundation version metadata consistency
+          - workflow/action allowlist and permission audit
+          - fixture validation for standard and nonstandard plugin layouts
+          - child project sync validation
+
+          After merge:
+          - the `finalize-foundation-release` workflow creates and pushes the annotated `${{ steps.version.outputs.value }}` tag automatically
+          - the same `finalize-foundation-release` workflow publishes the GitHub release and emits an attestation for the foundation release metadata asset
+          EOF
+
       - name: Create or update release pull request
         id: cpr
-        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0
-        with:
-          branch: release/${{ steps.version.outputs.value }}
-          base: ${{ inputs.base_ref }}
-          commit-message: Foundation release ${{ steps.version.outputs.value }}
-          title: Foundation release ${{ steps.version.outputs.value }}
-          body: |
-            This PR was created by the `prepare-foundation-release` workflow.
-
-            Included changes:
-            - bump `VERSION` to `${{ steps.version.outputs.value }}`
-            - add generated release notes to `CHANGELOG.md`
-            - prepare the repository for the foundation release tag
-
-            After merge:
-            - the `finalize-foundation-release` workflow creates and pushes the annotated `${{ steps.version.outputs.value }}` tag automatically
-            - the same `finalize-foundation-release` workflow publishes the GitHub release
-          delete-branch: false
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GIT_ADD_PATHS: VERSION,CHANGELOG.md,templates/child/.wp-plugin-base.env.example
+        run: |
+          bash scripts/update/create_or_update_pr.sh \
+            "release/${{ steps.version.outputs.value }}" \
+            "${{ inputs.base_ref }}" \
+            "Foundation release ${{ steps.version.outputs.value }}" \
+            "Foundation release ${{ steps.version.outputs.value }}" \
+            "$RUNNER_TEMP/foundation-release-pr.md"
 
       - name: Report prepare-foundation-release outcome
         env:
           BRANCH_EXISTS: ${{ steps.source.outputs.branch_exists }}
           OPEN_PR_EXISTS: ${{ steps.source.outputs.open_pr_exists }}
-          PULL_REQUEST_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
-          PULL_REQUEST_OPERATION: ${{ steps.cpr.outputs.pull-request-operation }}
-          PULL_REQUEST_URL: ${{ steps.cpr.outputs.pull-request-url }}
+          PULL_REQUEST_NUMBER: ${{ steps.cpr.outputs.pull_request_number }}
+          PULL_REQUEST_OPERATION: ${{ steps.cpr.outputs.pull_request_operation }}
+          PULL_REQUEST_URL: ${{ steps.cpr.outputs.pull_request_url }}
           RELEASE_BRANCH: release/${{ steps.version.outputs.value }}
         run: |
           set -euo pipefail
@@ -149,6 +180,6 @@ jobs:
           if [ "$BRANCH_EXISTS" = "true" ] && [ "$OPEN_PR_EXISTS" = "true" ]; then
             echo "Foundation release branch $RELEASE_BRANCH already existed and no additional PR update was required."
           else
-            echo "Foundation release branch $RELEASE_BRANCH was prepared, but no pull request was created. Check the create-pull-request step output." >&2
+            echo "Foundation release branch $RELEASE_BRANCH was prepared, but no pull request was created. Check the create_or_update_pr step output." >&2
             exit 1
           fi
