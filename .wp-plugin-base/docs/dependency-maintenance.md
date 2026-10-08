@@ -167,3 +167,72 @@ child manifest engines and CI runtime with the complete dependency graph.
 Keep npm updates enabled for the child-owned package
 through the managed Dependabot configuration. GitLab users should configure their
 chosen dependency updater for the same child-owned paths.
+
+## October 2026 tooling maintenance
+
+WordPress environment tooling retains 11.16.0 and its Node 22-compatible
+Playground graph, with `simple-git` 4.0.2
+explicitly overridden until upstream adopts its security fixes. Version 4 removes
+its default CommonJS export. The isolated installer applies the maintained
+`scripts/lib/patch_wordpress_env_git.cjs` adaptation to the two upstream imports,
+using the supported named export. It verifies exact package versions and both
+upstream source SHA-256 digests before writing either file; drift aborts install.
+No unsafe Git options or global module interception are introduced. Remove the
+patch and override together when an upstream release supports patched simple-git.
+The real wp-env download implementation is tested with clone, repeated fetch,
+branch advancement and tag checkout, plus rejection of modified source files. The refreshed
+lock also resolves patched `http-cache-semantics` and `proxy-addr` versions.
+This removes the critical and high findings that previously stopped foundation
+checks and unrelated dependency candidates. Keep the override scoped to this
+isolated development tool; it does not change plugin runtime dependencies.
+Qualify actual WordPress environment lifecycle behavior whenever updating it.
+
+The advisory audit still reports moderate findings through upstream `js-yaml` 3
+and its `argparse`/`sprintf-js` chain. There is no patched compatible `sprintf-js`
+release at this review. Retain the existing high-severity failure threshold and
+track upstream remediation; do not accept npm's suggested downgrade of the
+WordPress environment tool to an obsolete major as a security fix. Tooling checks
+now retain npm audit, install, and signature-verification diagnostics in CI logs,
+so a future finding can be diagnosed without reproducing a silent failure.
+
+Syft changed its publisher signature format to Sigstore bundles. Candidate
+preparation verifies the bundle against the same exact release workflow identity
+and OIDC issuer before accepting platform checksums. Missing bundles, invalid
+signatures, or mismatched archive checksums still fail before pin mutation.
+
+## Runtime-aligned major updates
+
+The admin starters and existing-application fixture externalize React to
+WordPress. WordPress 6.9 and 7.1.3 both publish React 18.3.1, so their development
+React, React DOM and corresponding type packages must remain on the matching
+major until the supported WordPress runtime is deliberately requalified. Dependabot
+continues patch/minor checks; standalone React 19 proposals are excluded from
+these three directories. Revisit all four packages together with that runtime
+migration, rather than updating only React or React DOM.
+
+The existing-application fixture retains TypeScript 6 because its pinned
+`typescript-eslint` 8.70.0 parser supports `>=4.8.4 <6.1.0`. A TypeScript 7
+upgrade must include a supported parser migration and full fixture qualification;
+Dependabot continues compatible compiler updates while excluding standalone major
+proposals for this fixture.
+
+The Semgrep toolchain supports Python 3.10. Its existing `rpds-py<2026` constraint
+is also represented in Dependabot configuration because the calendar-version
+2026 releases require Python 3.11. Revisit the bound and automation policy together
+when intentionally raising the Python support floor. These compatibility rules do
+not suppress advisory scanning or permit vulnerable dependencies.
+
+The October maintenance batch also advances the two hash-locked Python installer
+pins to pip 26.2.1 and setuptools 84.0.0, and the Semgrep scanner to 1.179.0 with
+its compatible PyJWT 2.15.1 dependency. The existing `rpds-py<2026` support bound
+remains intact. Qualify the combined locks on the minimum Python 3.10 interpreter
+and run the real scanner against unsafe fixtures before release.
+
+The required full foundation CI job also installs the pinned scanner and runs
+Semgrep's native rule tests against the actual production rule directory and
+`tests/fixtures/semgrep/wordpress-security.php`. Every existing rule has an unsafe
+case and a checked-permission control. This verifies detection behavior instead
+of merely accepting a successful package install. The October local QEMU host
+could install both supported Python graphs but could not execute either the
+previous or updated scanner binary because its CPU ISA is below the binary's
+requirement; scanner execution must pass on the supported CI runner before merge.

@@ -33,7 +33,7 @@ Hotfixes use the same model from `hotfix/x.y.z` branches.
 
 ## CI And Release Automation
 
-This project uses local managed workflow files generated from `wp-plugin-base` version `v1.10.2`.
+This project uses local managed workflow files generated from `wp-plugin-base` version `v1.10.3`.
 
 If you use a coding agent in this repository, treat `.wp-plugin-base/` as authoritative infrastructure code and avoid hand-editing generated managed files directly. Make behavior changes in the vendored foundation source/templates, then rerun sync.
 

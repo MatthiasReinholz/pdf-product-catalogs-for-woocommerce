@@ -217,14 +217,15 @@ If WooCommerce is deactivated while the plugin is installed, the plugin stays in
 
 ## Release Model
 
-This repository is a `wp-plugin-base` child project pinned to foundation version `v1.2.1`.
+This repository is a `wp-plugin-base` child project. Its foundation version is
+pinned by `FOUNDATION_VERSION` in `.wp-plugin-base.env`.
 
 GitHub Releases are the primary distribution mechanism. The WordPress app consumes the release ZIP through the `wp-core-base` managed `github-release` dependency flow.
 
 ## Foundation maintenance
 
-The complete vendored foundation is imported from signed release `v1.10.2`,
-commit `6c342a8f634c6a480ee78f6303118cea18b2356d`, through the trusted verified
+The complete vendored foundation is imported from signed release `v1.10.3`,
+commit `8bf0092d12c11e37c7ed4f6bc7f86515edfc2fa1`, through the trusted verified
 manual importer. Historical generated workflows were compared against their
 committed templates before explicit ownership reconciliation and regeneration.
 The resulting `.wp-plugin-base-automation.json` records managed file hashes;
