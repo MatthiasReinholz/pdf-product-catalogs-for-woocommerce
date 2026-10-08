@@ -1,0 +1,30 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+indent_style = space
+indent_size = 2
+trim_trailing_whitespace = true
+
+[*.{md,txt}]
+indent_style = unset
+indent_size = unset
+trim_trailing_whitespace = false
+
+[*.php]
+indent_style = tab
+indent_size = 4
+
+[*.php.example]
+indent_style = tab
+indent_size = 4
+
+[*.sh]
+indent_size = 2
+
+# WordPress Prettier owns JS indentation, including aligned ternary branches.
+[{.wp-plugin-base-admin-ui/src/*.js,admin-ui-pack-seed-*/.wp-plugin-base-admin-ui/src/*.js}]
+indent_style = unset
+indent_size = unset

@@ -12,27 +12,77 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 permissions:
-  contents: write
+  contents: read
   pull-requests: read
+
+concurrency:
+  group: release-publication-${{ github.repository }}
+  cancel-in-progress: false
 
 jobs:
   release:
+    if: ${{ github.ref == 'refs/heads/main' }}
     name: Release foundation
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: read
+      attestations: write
+      id-token: write
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Verify target tag exists on origin
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          # gh authenticates from the environment; API failures retain their
+          # HTTP error, so missing tags and inaccessible repositories differ.
+          gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${VERSION}" --jq '.ref' >/dev/null
+
+      - name: Checkout existing tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.version }}
+          ref: refs/tags/${{ inputs.version }}
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout current trusted release helpers
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: main
+          path: .wp-plugin-base-release-driver
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Isolate trusted release helpers from packaged source
+        run: |
+          mkdir -p "$RUNNER_TEMP/wp-plugin-base-release-driver"
+          cp -R .wp-plugin-base-release-driver/scripts "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts"
+          cp -R .wp-plugin-base-release-driver/docs "$RUNNER_TEMP/wp-plugin-base-release-driver/docs"
+          cp -R .wp-plugin-base-release-driver/tools "$RUNNER_TEMP/wp-plugin-base-release-driver/tools"
+          rm -rf .wp-plugin-base-release-driver
+
+      - name: Verify release tag is annotated
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$(git cat-file -t "refs/tags/$VERSION")" != "tag" ]; then
+            echo "Tag $VERSION exists but is not an annotated tag." >&2
+            exit 1
+          fi
 
       - name: Validate target version
         id: version
         shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          version="${{ inputs.version }}"
+          version="$INPUT_VERSION"
 
           if ! [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Version must use vX.Y.Z format." >&2
@@ -43,10 +93,28 @@ jobs:
 
       - name: Verify release tag comes from a merged release PR
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
         run: |
+          set -euo pipefail
           COMMIT_SHA="$(git rev-parse HEAD)"
-          bash scripts/ci/check_release_pr.sh "${GITHUB_REPOSITORY}" "${{ steps.version.outputs.value }}" "$COMMIT_SHA"
+          response="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${COMMIT_SHA}/pulls")"
+          match_count="$(
+            jq --arg version "$VERSION" --arg sha "$COMMIT_SHA" '
+              map(
+                select(
+                  .merged_at != null and
+                  .base.ref == "main" and
+                  (.head.ref == ("release/" + $version) or .head.ref == ("hotfix/" + $version)) and
+                  .merge_commit_sha == $sha
+                )
+              ) | length
+            ' <<<"$response"
+          )"
+          if [ "$match_count" -lt 1 ]; then
+            echo "Commit ${COMMIT_SHA} is not the merge commit of a merged release or hotfix PR for version ${VERSION}." >&2
+            exit 1
+          fi
 
       - name: Validate foundation version metadata
         run: bash scripts/foundation/check_version.sh "${{ steps.version.outputs.value }}"
@@ -55,8 +123,61 @@ jobs:
         run: |
           bash scripts/foundation/generate_github_release_body.sh "${{ steps.version.outputs.value }}" > dist-foundation-release.md
 
+      - name: Create foundation release metadata asset
+        run: |
+          bash scripts/foundation/write_release_metadata.sh \
+            "${{ steps.version.outputs.value }}" \
+            "$(git rev-parse HEAD)" \
+            dist-foundation-release.json \
+            github-release \
+            "${GITHUB_REPOSITORY}" \
+            https://api.github.com
+
+      - name: Install SBOM and signing tools
+        run: |
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/install_release_security_tools.sh" "$RUNNER_TEMP/wp-plugin-base-release-tools"
+          echo "$RUNNER_TEMP/wp-plugin-base-release-tools" >> "$GITHUB_PATH"
+
+      - name: Generate foundation SBOM
+        run: bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/generate_sbom.sh" "." dist-foundation-release.sbom.cdx.json
+
+      - name: Sign foundation release metadata
+        run: bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/sign_release.sh" dist-foundation-release.json dist-foundation-release.json.sigstore.json
+
+      - name: Verify signing identity before publication
+        run: |
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/verify_sigstore_bundle.sh" \
+            "$GITHUB_REPOSITORY" \
+            dist-foundation-release.json \
+            dist-foundation-release.json.sigstore.json \
+            foundation github-release "$GITHUB_API_URL"
+
       - name: Create GitHub release
-        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/publish_github_release.sh" --repair \
+            "${{ steps.version.outputs.value }}" \
+            "${{ steps.version.outputs.value }}" \
+            dist-foundation-release.md \
+            dist-foundation-release.json \
+            dist-foundation-release.sbom.cdx.json \
+            dist-foundation-release.json.sigstore.json
+
+      - name: Verify GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.value }}
+        run: |
+          set -euo pipefail
+          bash "$RUNNER_TEMP/wp-plugin-base-release-driver/scripts/release/verify_github_release_assets.sh" \
+            "$VERSION" \
+            false \
+            dist-foundation-release.json \
+            dist-foundation-release.sbom.cdx.json \
+            dist-foundation-release.json.sigstore.json
+
+      - name: Attest foundation release metadata
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:
-          tag_name: ${{ steps.version.outputs.value }}
-          body_path: dist-foundation-release.md
+          subject-path: dist-foundation-release.json

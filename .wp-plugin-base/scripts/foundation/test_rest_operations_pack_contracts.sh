@@ -1,0 +1,298 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PERMISSIONS_CLASS_PATH="$ROOT_DIR/templates/child/rest-operations-pack/lib/wp-plugin-base/rest-operations/class-wp-plugin-base-rest-operations-permissions.php"
+ERROR_LOG_PATH="$(mktemp)"
+SCAN_FIXTURE="$(mktemp -d)"
+
+trap 'rm -f "$ERROR_LOG_PATH"; rm -rf "$SCAN_FIXTURE"' EXIT
+
+cp -R "$ROOT_DIR/tests/fixtures/runtime-pack-ready/." "$SCAN_FIXTURE/"
+mkdir -p "$SCAN_FIXTURE/.wp-plugin-base"
+rsync -a --exclude '.git' "$ROOT_DIR/" "$SCAN_FIXTURE/.wp-plugin-base/"
+WP_PLUGIN_BASE_ROOT="$SCAN_FIXTURE" bash "$ROOT_DIR/scripts/update/sync_child_repo.sh" >/dev/null
+perl -0pi -e "s/'output_schema'\\s*=>\\s*array\\(/'error_response' => array( 'mode' => 'envelope', 'message' => __( 'Settings failed.', 'runtime-pack-ready' ) ),\\n\\t\\t'output_schema'   => array(/" "$SCAN_FIXTURE/includes/rest-operations/settings-operations.php"
+WP_PLUGIN_BASE_ROOT="$SCAN_FIXTURE" bash "$ROOT_DIR/scripts/ci/scan_rest_operation_contract.sh" "" >/dev/null
+perl -0pi -e "s/'message' => __\\( 'Settings failed\\.', 'runtime-pack-ready' \\)/'message' => __( 'Settings failed.', 'runtime-pack-ready' ), 'raw_body' => 'nope'/" "$SCAN_FIXTURE/includes/rest-operations/settings-operations.php"
+if WP_PLUGIN_BASE_ROOT="$SCAN_FIXTURE" bash "$ROOT_DIR/scripts/ci/scan_rest_operation_contract.sh" "" >/dev/null 2>&1; then
+  echo "REST operation contract unexpectedly accepted an unknown error_response key." >&2
+  exit 1
+fi
+perl -0pi -e "s/'error_response' => array\\( 'mode' => 'envelope', 'message' => __\\( 'Settings failed\\.', 'runtime-pack-ready' \\), 'raw_body' => 'nope' \\)/'error_response' => array( 'mode' => 'envelope', 'message' => '   ' )/" "$SCAN_FIXTURE/includes/rest-operations/settings-operations.php"
+if WP_PLUGIN_BASE_ROOT="$SCAN_FIXTURE" bash "$ROOT_DIR/scripts/ci/scan_rest_operation_contract.sh" "" >/dev/null 2>&1; then
+  echo "REST operation contract unexpectedly accepted a blank error_response message." >&2
+  exit 1
+fi
+
+# Registry policy must recognize both plain and PHP 8 fully-qualified calls.
+# Restore the generated fixture rather than hand-editing placeholders in the owned file.
+rm "$SCAN_FIXTURE/includes/rest-operations/settings-operations.php"
+WP_PLUGIN_BASE_ROOT="$SCAN_FIXTURE" bash "$ROOT_DIR/scripts/update/sync_child_repo.sh" >/dev/null
+for call in 'register_rest_route' '\register_rest_route'; do
+  printf "<?php %s( 'fixture/v1', '/bypass', array() );\n" "$call" > "$SCAN_FIXTURE/route-bypass.php"
+  if WP_PLUGIN_BASE_ROOT="$SCAN_FIXTURE" bash "$ROOT_DIR/scripts/ci/scan_rest_operation_contract.sh" >/dev/null 2>&1; then
+    echo "Registry policy failed to detect $call." >&2
+    exit 1
+  fi
+done
+rm "$SCAN_FIXTURE/route-bypass.php"
+WP_PLUGIN_BASE_ROOT="$SCAN_FIXTURE" bash "$ROOT_DIR/scripts/ci/scan_rest_operation_contract.sh" >/dev/null
+
+PERMISSIONS_CLASS_PATH="$PERMISSIONS_CLASS_PATH" ERROR_LOG_PATH="$ERROR_LOG_PATH" php <<'PHP'
+<?php
+define( 'ABSPATH', '/' );
+
+ini_set( 'log_errors', '1' );
+ini_set( 'error_log', getenv( 'ERROR_LOG_PATH' ) );
+
+class WP_Error {
+  public function get_error_code() { return $this->code; }
+  public function get_error_data() { return $this->data; }
+  public $code;
+  public $message;
+  public $data;
+
+  public function __construct( $code, $message, $data = array() ) {
+    $this->code    = $code;
+    $this->message = $message;
+    $this->data    = $data;
+  }
+}
+
+class WP_REST_Request {
+  public function get_header( $key ) { return ''; }
+  private $params = array();
+
+  public function set_body_params( $params ) {
+    $this->params = $params;
+  }
+
+  public function get_param( $key ) {
+    return $this->params[ $key ] ?? null;
+  }
+}
+
+function __( $text ) {
+  return $text;
+}
+
+function is_wp_error( $value ) {
+  return $value instanceof WP_Error;
+}
+
+$GLOBALS['wp_plugin_base_test_state'] = array(
+  'is_user_logged_in' => true,
+  'current_user_can'  => array(
+    'manage_options' => false,
+    'edit_posts'     => true,
+  ),
+  'current_user_id'   => 21,
+  'user_meta'         => array(
+    'example_plugin_rest_operation_scopes' => array( 'allow' => array( 'settings.*', 'items.read' ) ),
+  ),
+  'options'           => array(
+    'example_plugin_rest_operation_scopes' => array( 'allow' => array( 'catalog.read' ) ),
+  ),
+  'scope_filter_mode' => 'append',
+);
+
+function is_user_logged_in() {
+  return $GLOBALS['wp_plugin_base_test_state']['is_user_logged_in'];
+}
+
+function current_user_can( $capability ) {
+  return ! empty( $GLOBALS['wp_plugin_base_test_state']['current_user_can'][ $capability ] );
+}
+
+function get_current_user_id() {
+  return $GLOBALS['wp_plugin_base_test_state']['current_user_id'];
+}
+
+function get_user_meta( $user_id, $key ) {
+  unset( $user_id );
+  return $GLOBALS['wp_plugin_base_test_state']['user_meta'][ $key ] ?? array();
+}
+
+function get_option( $key, $default = array() ) {
+  return $GLOBALS['wp_plugin_base_test_state']['options'][ $key ] ?? $default;
+}
+
+function apply_filters( $hook_name, $value ) {
+  if ( 'example-plugin_rest_granted_scopes' === $hook_name ) {
+    if ( 'invalid' === $GLOBALS['wp_plugin_base_test_state']['scope_filter_mode'] ) {
+      return null;
+    }
+    if ( 'throw' === $GLOBALS['wp_plugin_base_test_state']['scope_filter_mode'] ) {
+      throw new RuntimeException( 'Scope filter exploded.' );
+    }
+    $value[] = 'items.write';
+  }
+
+  return $value;
+}
+
+require getenv( 'PERMISSIONS_CLASS_PATH' );
+
+$request = new WP_REST_Request();
+$operation = array(
+  'visibility'      => 'admin',
+  'capability'      => 'edit_posts',
+  'required_scopes' => array( 'settings.read', 'items.write' ),
+);
+
+$result = WP_Plugin_Base_REST_Operations_Permissions::check_operation( 'example-plugin', $operation, $request );
+if ( true !== $result ) {
+  fwrite( STDERR, "Expected wildcard and filtered scopes to satisfy all required scopes.\n" );
+  exit( 1 );
+}
+
+$operation = array(
+  'visibility'      => 'admin',
+  'capability'      => 'edit_posts',
+  'required_scopes' => array( 'settings.read', 'reports.export' ),
+);
+
+$result = WP_Plugin_Base_REST_Operations_Permissions::check_operation( 'example-plugin', $operation, $request );
+if ( ! is_wp_error( $result ) || 'wp_plugin_base_rest_scope_forbidden' !== $result->code ) {
+  fwrite( STDERR, "Expected missing required scope to fail.\n" );
+  exit( 1 );
+}
+
+$operation = array(
+  'visibility'      => 'admin',
+  'capability'      => 'edit_posts',
+  'required_scopes' => 'settings.read',
+);
+
+$result = WP_Plugin_Base_REST_Operations_Permissions::check_operation( 'example-plugin', $operation, $request );
+if ( ! is_wp_error( $result ) || 'wp_plugin_base_rest_invalid_scope_configuration' !== $result->code || 500 !== ( $result->data['status'] ?? null ) ) {
+  fwrite( STDERR, "Expected malformed required_scopes to fail closed.\n" );
+  exit( 1 );
+}
+
+$GLOBALS['wp_plugin_base_test_state']['scope_filter_mode'] = 'invalid';
+$operation = array(
+  'visibility'      => 'admin',
+  'capability'      => 'edit_posts',
+  'required_scopes' => array( 'catalog.read' ),
+);
+
+$result = WP_Plugin_Base_REST_Operations_Permissions::check_operation( 'example-plugin', $operation, $request );
+if ( ! is_wp_error( $result ) || 'wp_plugin_base_rest_scope_check_failed' !== $result->code || 500 !== ( $result->data['status'] ?? null ) ) {
+  fwrite( STDERR, "Expected invalid scope filters to fail closed.\n" );
+  exit( 1 );
+}
+
+$GLOBALS['wp_plugin_base_test_state']['scope_filter_mode'] = 'throw';
+$result = WP_Plugin_Base_REST_Operations_Permissions::check_operation( 'example-plugin', $operation, $request );
+if ( ! is_wp_error( $result ) || 'wp_plugin_base_rest_scope_check_failed' !== $result->code || 500 !== ( $result->data['status'] ?? null ) ) {
+  fwrite( STDERR, "Expected thrown scope filters to fail closed.\n" );
+  exit( 1 );
+}
+
+$GLOBALS['wp_plugin_base_test_state']['scope_filter_mode'] = 'append';
+
+// Malformed programmatic capability metadata must never grant access or warn.
+set_error_handler( static function ( $severity, $message ) {
+  throw new RuntimeException( $message, $severity );
+} );
+foreach ( array( 42, true, new stdClass(), '', '  ', array( 'edit_posts', 42 ), array( array() ), array( null ) ) as $capability ) {
+  $invalid_operation = array(
+    'visibility' => 'admin',
+    'capability' => $capability,
+  );
+  $invalid_result = WP_Plugin_Base_REST_Operations_Permissions::check_operation( 'example-plugin', $invalid_operation, $request );
+  if ( ! is_wp_error( $invalid_result ) || 'wp_plugin_base_rest_invalid_capability_configuration' !== $invalid_result->code || 500 !== ( $invalid_result->data['status'] ?? null ) ) {
+    fwrite( STDERR, "Expected malformed capability metadata to return a configuration error.\n" );
+    exit( 1 );
+  }
+}
+restore_error_handler();
+foreach ( array( 'edit_posts', array( 'edit_posts' ) ) as $capability ) {
+  if ( true !== WP_Plugin_Base_REST_Operations_Permissions::check_operation( 'example-plugin', array( 'capability' => $capability ), $request ) ) {
+    fwrite( STDERR, "Expected valid string and list capability declarations to remain supported.\n" );
+    exit( 1 );
+  }
+}
+
+$operation = array(
+  'visibility'      => 'admin',
+  'required_scopes' => array( 'settings.read' ),
+);
+
+$result = WP_Plugin_Base_REST_Operations_Permissions::check_operation( 'example-plugin', $operation, $request );
+if ( ! is_wp_error( $result ) || 'wp_plugin_base_rest_forbidden' !== $result->code ) {
+  fwrite( STDERR, "Expected operations without a capability declaration to fail closed.\n" );
+  exit( 1 );
+}
+
+$operation = array(
+  'visibility'           => 'admin',
+  'capability_callback'  => static function () {
+    return new WP_Error( 'custom_capability_error', 'Capability callback failed.', array( 'status' => 418 ) );
+  },
+  'required_scopes'      => array( 'settings.read' ),
+);
+
+$result = WP_Plugin_Base_REST_Operations_Permissions::check_operation( 'example-plugin', $operation, $request );
+if ( ! is_wp_error( $result ) || 'custom_capability_error' !== $result->code || 418 !== ( $result->data['status'] ?? null ) ) {
+  fwrite( STDERR, "Expected capability_callback WP_Error responses to be preserved.\n" );
+  exit( 1 );
+}
+
+$operation = array(
+  'visibility'          => 'admin',
+  'capability_callback' => static function () {
+    return 'yes';
+  },
+  'required_scopes'     => array( 'settings.read' ),
+);
+
+$result = WP_Plugin_Base_REST_Operations_Permissions::check_operation( 'example-plugin', $operation, $request );
+if ( ! is_wp_error( $result ) || 'wp_plugin_base_rest_forbidden' !== $result->code ) {
+  fwrite( STDERR, "Expected truthy non-boolean capability_callback results to fail closed.\n" );
+  exit( 1 );
+}
+
+$operation = array(
+  'visibility'          => 'admin',
+  'capability_callback' => static function () {
+    throw new RuntimeException( 'Capability callback exploded.' );
+  },
+  'required_scopes'     => array( 'settings.read' ),
+);
+
+$result = WP_Plugin_Base_REST_Operations_Permissions::check_operation( 'example-plugin', $operation, $request );
+if ( ! is_wp_error( $result ) || 'wp_plugin_base_rest_capability_check_failed' !== $result->code || 500 !== ( $result->data['status'] ?? null ) ) {
+  fwrite( STDERR, "Expected thrown capability callbacks to fail with a normalized 500 WP_Error.\n" );
+  exit( 1 );
+}
+
+$logged_output = file_get_contents( getenv( 'ERROR_LOG_PATH' ) );
+if ( false === $logged_output || false === strpos( $logged_output, 'REST operation (unknown) capability_callback threw an uncaught RuntimeException.' ) ) {
+  fwrite( STDERR, "Expected permission failures to log a sanitized exception class.\n" );
+  exit( 1 );
+}
+
+if ( false !== strpos( $logged_output, 'Capability callback exploded.' ) ) {
+  fwrite( STDERR, "Permission failure logs must not include raw exception messages.\n" );
+  exit( 1 );
+}
+
+$GLOBALS['wp_plugin_base_test_state']['is_user_logged_in'] = false;
+$operation = array(
+  'visibility'      => 'public',
+  'required_scopes' => array(),
+);
+
+$result = WP_Plugin_Base_REST_Operations_Permissions::check_operation( 'example-plugin', $operation, $request );
+if ( true !== $result ) {
+  fwrite( STDERR, "Expected public operation to allow anonymous access.\n" );
+  exit( 1 );
+}
+
+echo "REST operations permission contract tests passed.\n";
+PHP

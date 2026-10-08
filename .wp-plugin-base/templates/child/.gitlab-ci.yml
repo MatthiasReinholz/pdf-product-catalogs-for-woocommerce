@@ -1,0 +1,115 @@
+stages:
+  - validate
+  - test
+  - maintenance
+  - release
+
+include:
+  - template: Jobs/SAST.gitlab-ci.yml
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+
+.wp_plugin_base_runtime:
+  rules: &wp_plugin_base_rules
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+  image: $WP_PLUGIN_BASE_GITLAB_RUNTIME_IMAGE
+  before_script:
+    - bash .wp-plugin-base/scripts/ci/prepare_gitlab_runtime.sh .wp-plugin-base.env
+
+.wp_plugin_base_release_runtime:
+  extends: .wp_plugin_base_runtime
+
+variables:
+  GIT_DEPTH: '0'
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  WP_PLUGIN_BASE_GITLAB_RUNTIME_IMAGE: ubuntu:24.04@sha256:c4a8d5503dfb2a3eb8ab5f807da5bc69a85730fb49b5cfca2330194ebcc41c7b
+  WP_PLUGIN_BASE_GITLAB_BOOTSTRAP_APT: 'true'
+
+validate:
+  extends: .wp_plugin_base_runtime
+  stage: validate
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - bash .wp-plugin-base/scripts/ci/validate_project.sh ".wp-plugin-base.env" "${CI_COMMIT_REF_NAME}"
+  artifacts:
+    when: always
+    paths:
+      - dist/
+
+readiness:
+  extends: .wp_plugin_base_runtime
+  stage: test
+  needs: [validate]
+  script:
+    - |
+      . .wp-plugin-base/scripts/lib/load_config.sh
+      wp_plugin_base_load_config .wp-plugin-base.env
+      if wp_plugin_base_is_true "$WORDPRESS_READINESS_ENABLED"; then
+        bash .wp-plugin-base/scripts/ci/validate_wordpress_readiness.sh .wp-plugin-base.env
+      fi
+
+runtime_matrix_config:
+  extends: .wp_plugin_base_runtime
+  stage: validate
+  script:
+    - mkdir -p dist
+    - bash .wp-plugin-base/scripts/ci/generate_gitlab_runtime_pipeline.sh .wp-plugin-base.env > dist/runtime-pipeline.yml
+  artifacts:
+    paths: [dist/runtime-pipeline.yml]
+
+runtime_matrix:
+  rules: *wp_plugin_base_rules
+  stage: test
+  needs: [runtime_matrix_config]
+  trigger:
+    include:
+      - artifact: dist/runtime-pipeline.yml
+        job: runtime_matrix_config
+    strategy: depend
+
+
+prepare_release:
+  extends: .wp_plugin_base_runtime
+  stage: maintenance
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+    - when: never
+  script:
+    - test -n "${RELEASE_TYPE:-}" || { echo "Set RELEASE_TYPE to patch, minor, major, or custom when starting the pipeline."; exit 1; }
+    - bash .wp-plugin-base/scripts/release/prepare_release_change_request.sh "${RELEASE_TYPE}" "${RELEASE_VERSION:-}" "${BASE_REF:-__DEFAULT_BRANCH__}" ".wp-plugin-base.env"
+
+update_foundation:
+  extends: .wp_plugin_base_runtime
+  stage: maintenance
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual
+    - when: never
+  script:
+    - bash .wp-plugin-base/scripts/release/install_release_security_tools.sh "$CI_PROJECT_DIR/.release-tools"
+    - export PATH="$CI_PROJECT_DIR/.release-tools:$PATH"
+    - bash .wp-plugin-base/scripts/update/run_foundation_update.sh ".wp-plugin-base.env" "${BASE_REF:-__DEFAULT_BRANCH__}"
+
+release:
+  extends: .wp_plugin_base_release_runtime
+  stage: release
+  resource_group: release-publication
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  environment:
+    name: __PRODUCTION_ENVIRONMENT__
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^[0-9]+\.[0-9]+\.[0-9]+$/'
+  script:
+    - bash .wp-plugin-base/scripts/release/run_gitlab_release.sh "${CI_COMMIT_TAG}" ".wp-plugin-base.env"
+  artifacts:
+    when: always
+    paths:
+      - dist/

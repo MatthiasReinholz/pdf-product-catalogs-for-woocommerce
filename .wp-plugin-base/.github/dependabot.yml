@@ -8,3 +8,130 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+  - package-ecosystem: npm
+    directory: /tools/wordpress-env
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope
+  - package-ecosystem: npm
+    directory: /templates/child/admin-ui-pack-seed-basic/.wp-plugin-base-admin-ui
+    # WordPress 6.9 and 7.1 supply React 18.3.1; review runtime compatibility first.
+    ignore:
+      - dependency-name: "react"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "react-dom"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@types/react"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@types/react-dom"
+        update-types:
+          - version-update:semver-major
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope
+  - package-ecosystem: npm
+    directory: /templates/child/admin-ui-pack-seed-dataviews/.wp-plugin-base-admin-ui
+    # WordPress 6.9 and 7.1 supply React 18.3.1; review runtime compatibility first.
+    ignore:
+      - dependency-name: "react"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "react-dom"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@types/react"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@types/react-dom"
+        update-types:
+          - version-update:semver-major
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope
+  - package-ecosystem: npm
+    directory: /tests/fixtures/existing-application
+    # WordPress 6.9 and 7.1 supply React 18.3.1; review runtime compatibility first.
+    ignore:
+      - dependency-name: "react"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "react-dom"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@types/react"
+        update-types:
+          - version-update:semver-major
+      - dependency-name: "@types/react-dom"
+        update-types:
+          - version-update:semver-major
+      # typescript-eslint 8.70 supports TypeScript >=4.8.4 <6.1.0.
+      - dependency-name: "typescript"
+        update-types:
+          - version-update:semver-major
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope
+  - package-ecosystem: npm
+    directory: /tools/markdownlint
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope
+  - package-ecosystem: pip
+    directory: /tools/python-lint-tools
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope
+  - package-ecosystem: pip
+    directory: /tools/python-semgrep
+    # Calendar-version rpds-py releases drop the supported Python 3.10 floor.
+    ignore:
+      - dependency-name: rpds-py
+        versions:
+          - ">=2026"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope
+  - package-ecosystem: composer
+    directory: /templates/child/quality-pack/.wp-plugin-base-quality-pack
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope
+    ignore:
+      - dependency-name: phpunit/phpunit
+        update-types:
+          - version-update:semver-major
+  - package-ecosystem: composer
+    directory: /templates/child/security-pack/.wp-plugin-base-security-pack
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: chore
+      include: scope

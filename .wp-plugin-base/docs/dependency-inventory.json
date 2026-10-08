@@ -1,0 +1,212 @@
+{
+  "schema_version": 1,
+  "dependencies": [
+    {
+      "id": "github-actions-workflows",
+      "tier": "lockfile-backed",
+      "update": {
+        "kind": "dependabot",
+        "ecosystem": "github-actions",
+        "directory": "/"
+      }
+    },
+    {
+      "id": "wordpress-env-tooling",
+      "tier": "lockfile-backed",
+      "update": {
+        "kind": "dependabot",
+        "ecosystem": "npm",
+        "directory": "/tools/wordpress-env"
+      },
+      "lockfile": "tools/wordpress-env/package-lock.json"
+    },
+    {
+      "id": "admin-ui-basic-starter-tooling",
+      "tier": "lockfile-backed",
+      "update": {
+        "kind": "dependabot",
+        "ecosystem": "npm",
+        "directory": "/templates/child/admin-ui-pack-seed-basic/.wp-plugin-base-admin-ui"
+      },
+      "lockfile": "templates/child/admin-ui-pack-seed-basic/.wp-plugin-base-admin-ui/package-lock.json"
+    },
+    {
+      "id": "admin-ui-dataviews-starter-tooling",
+      "tier": "lockfile-backed",
+      "update": {
+        "kind": "dependabot",
+        "ecosystem": "npm",
+        "directory": "/templates/child/admin-ui-pack-seed-dataviews/.wp-plugin-base-admin-ui"
+      },
+      "lockfile": "templates/child/admin-ui-pack-seed-dataviews/.wp-plugin-base-admin-ui/package-lock.json"
+    },
+    {
+      "id": "existing-application-adoption-fixture",
+      "tier": "lockfile-backed",
+      "update": {
+        "kind": "dependabot",
+        "ecosystem": "npm",
+        "directory": "/tests/fixtures/existing-application"
+      },
+      "lockfile": "tests/fixtures/existing-application/package-lock.json"
+    },
+    {
+      "id": "markdownlint-tooling",
+      "tier": "lockfile-backed",
+      "update": {
+        "kind": "dependabot",
+        "ecosystem": "npm",
+        "directory": "/tools/markdownlint"
+      },
+      "lockfile": "tools/markdownlint/package-lock.json"
+    },
+    {
+      "id": "python-lint-tooling",
+      "tier": "lockfile-backed",
+      "update": {
+        "kind": "dependabot",
+        "ecosystem": "pip",
+        "directory": "/tools/python-lint-tools"
+      },
+      "lockfile": "tools/python-lint-tools/requirements.txt"
+    },
+    {
+      "id": "python-semgrep-tooling",
+      "tier": "lockfile-backed",
+      "update": {
+        "kind": "dependabot",
+        "ecosystem": "pip",
+        "directory": "/tools/python-semgrep"
+      },
+      "lockfile": "tools/python-semgrep/requirements.txt"
+    },
+    {
+      "id": "quality-pack-composer",
+      "tier": "lockfile-backed",
+      "update": {
+        "kind": "dependabot",
+        "ecosystem": "composer",
+        "directory": "/templates/child/quality-pack/.wp-plugin-base-quality-pack"
+      },
+      "lockfile": "templates/child/quality-pack/.wp-plugin-base-quality-pack/composer.lock"
+    },
+    {
+      "id": "security-pack-composer",
+      "tier": "lockfile-backed",
+      "update": {
+        "kind": "dependabot",
+        "ecosystem": "composer",
+        "directory": "/templates/child/security-pack/.wp-plugin-base-security-pack"
+      },
+      "lockfile": "templates/child/security-pack/.wp-plugin-base-security-pack/composer.lock"
+    },
+    {
+      "id": "plugin-update-checker-runtime",
+      "tier": "metadata-only",
+      "update": {
+        "kind": "workflow",
+        "path": ".github/workflows/update-plugin-check.yml"
+      },
+      "pin": {
+        "file": "templates/child/github-release-updater-pack/lib/wp-plugin-base/plugin-update-checker/plugin-update-checker.php",
+        "pattern": "Plugin Update Checker Library 5.7"
+      }
+    },
+    {
+      "id": "plugin-check",
+      "tier": "metadata-only",
+      "update": {
+        "kind": "workflow",
+        "path": ".github/workflows/update-plugin-check.yml"
+      },
+      "pin": {
+        "file": "scripts/lib/wordpress_tooling.sh",
+        "pattern": "WP_PLUGIN_BASE_PLUGIN_CHECK_VERSION='2.1.0'"
+      }
+    },
+    {
+      "id": "composer-docker-image",
+      "tier": "metadata-only",
+      "update": {
+        "kind": "workflow",
+        "path": ".github/workflows/update-plugin-check.yml"
+      },
+      "pin": {
+        "file": "scripts/lib/wordpress_tooling.sh",
+        "pattern": "WP_PLUGIN_BASE_COMPOSER_IMAGE='composer@sha256:9715c7f69044da2a212a5fbde29ee7da24e364d426560ae6367b060236f847d7'"
+      }
+    },
+    {
+      "id": "shellcheck-binary",
+      "tier": "metadata-only",
+      "update": {
+        "kind": "workflow",
+        "path": ".github/workflows/update-plugin-check.yml"
+      },
+      "pin": {
+        "file": "scripts/ci/install_lint_tools.sh",
+        "pattern": "SHELLCHECK_VERSION='0.11.0'"
+      }
+    },
+    {
+      "id": "actionlint-binary",
+      "tier": "metadata-only",
+      "update": {
+        "kind": "workflow",
+        "path": ".github/workflows/update-plugin-check.yml"
+      },
+      "pin": {
+        "file": "scripts/ci/install_lint_tools.sh",
+        "pattern": "ACTIONLINT_VERSION='1.7.12'"
+      }
+    },
+    {
+      "id": "editorconfig-checker-binary",
+      "tier": "metadata-only",
+      "update": {
+        "kind": "workflow",
+        "path": ".github/workflows/update-plugin-check.yml"
+      },
+      "pin": {
+        "file": "scripts/ci/install_lint_tools.sh",
+        "pattern": "EDITORCONFIG_CHECKER_VERSION='3.11.3'"
+      }
+    },
+    {
+      "id": "gitleaks-binary",
+      "tier": "metadata-only",
+      "update": {
+        "kind": "workflow",
+        "path": ".github/workflows/update-plugin-check.yml"
+      },
+      "pin": {
+        "file": "scripts/ci/install_lint_tools.sh",
+        "pattern": "GITLEAKS_VERSION='8.30.1'"
+      }
+    },
+    {
+      "id": "syft-binary",
+      "tier": "verified-provenance",
+      "update": {
+        "kind": "workflow",
+        "path": ".github/workflows/update-plugin-check.yml"
+      },
+      "pin": {
+        "file": "scripts/release/install_release_security_tools.sh",
+        "pattern": "SYFT_VERSION='1.52.0'"
+      }
+    },
+    {
+      "id": "cosign-binary",
+      "tier": "verified-provenance",
+      "update": {
+        "kind": "workflow",
+        "path": ".github/workflows/update-plugin-check.yml"
+      },
+      "pin": {
+        "file": "scripts/release/install_release_security_tools.sh",
+        "pattern": "COSIGN_VERSION='3.1.3'"
+      }
+    }
+  ]
+}

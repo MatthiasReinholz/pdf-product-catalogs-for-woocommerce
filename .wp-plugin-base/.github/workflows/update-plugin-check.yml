@@ -1,0 +1,42 @@
+name: update-external-dependencies
+
+on:
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: update-external-dependencies-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    name: Update dependency (${{ matrix.dependency_id }})
+    permissions:
+      contents: write
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        dependency_id:
+          - plugin-update-checker-runtime
+          - plugin-check
+          - composer-docker-image
+          - shellcheck-binary
+          - actionlint-binary
+          - editorconfig-checker-binary
+          - gitleaks-binary
+          - syft-binary
+          - cosign-binary
+    uses: ./.github/workflows/update-external-dependency.yml
+    with:
+      dependency_id: ${{ matrix.dependency_id }}
+    secrets:
+      WP_PLUGIN_BASE_PR_TOKEN: ${{ secrets.WP_PLUGIN_BASE_PR_TOKEN }}

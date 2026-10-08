@@ -1,0 +1,49 @@
+name: woocommerce-qit
+
+on:
+  workflow_dispatch:
+    inputs:
+      extension_slug:
+        description: 'WooCommerce Marketplace extension slug'
+        required: true
+        type: string
+      test_suites:
+        description: 'Comma-separated QIT test suites (activation,security,validation,phpcompatibility,phpstan)'
+        required: false
+        default: 'activation,security,validation,phpcompatibility,phpstan'
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+permissions:
+  contents: read
+
+jobs:
+  qit:
+    name: WooCommerce QIT
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240
+        with:
+          php-version: __PHP_VERSION__
+          tools: composer
+
+      - name: Run WooCommerce QIT suites
+        env:
+          EXTENSION_SLUG: ${{ github.event.inputs.extension_slug }}
+          TEST_SUITES: ${{ github.event.inputs.test_suites }}
+          QIT_USER: ${{ secrets.QIT_USER }}
+          QIT_APP_PASSWORD: ${{ secrets.QIT_APP_PASSWORD }}
+        run: |
+          bash .wp-plugin-base/scripts/ci/run_woocommerce_qit.sh \
+            "$EXTENSION_SLUG" \
+            "$TEST_SUITES"

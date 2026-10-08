@@ -1,0 +1,165 @@
+<?php // phpcs:disable WordPress.Files.FileName.InvalidClassFileName -- Runtime class prefixes vary by consumer; managed filenames remain stable.
+/**
+ * Abilities adapter for REST operations.
+ *
+ * @package WPPluginBase
+ * @since NEXT
+ */
+
+if ( ! defined( 'ABSPATH' ) ) {
+	exit;
+}
+
+if ( ! class_exists( 'WP_Plugin_Base_REST_Operations_Abilities_Adapter' ) ) {
+	/**
+	 * Registers abilities for operations when the Abilities API is available.
+	 *
+	 * @since NEXT
+	 */
+	class WP_Plugin_Base_REST_Operations_Abilities_Adapter {
+		/**
+		 * Registers the plugin ability category.
+		 *
+		 * @since NEXT
+		 *
+		 * @param string $category_slug  Category slug.
+		 * @param string $category_label Category label.
+		 * @return void
+		 */
+		public static function register_category( $category_slug, $category_label ) {
+			if ( ! function_exists( 'wp_register_ability_category' ) ) {
+				return;
+			}
+
+			wp_register_ability_category(
+				$category_slug,
+				array(
+					'label'       => $category_label,
+					'description' => sprintf(
+						/* translators: %s: plugin label. */
+						__( 'Abilities exposed by %s.', '__PLUGIN_SLUG__' ),
+						$category_label
+					),
+				)
+			);
+		}
+
+		/**
+		 * Registers abilities for the operation set.
+		 *
+		 * @since NEXT
+		 *
+		 * @param string                         $plugin_slug   Plugin slug.
+		 * @param string                         $category_slug Category slug.
+		 * @param array<int,array<string,mixed>> $operations Operations.
+		 * @return void
+		 */
+		public static function register_operations( $plugin_slug, $category_slug, array $operations ) {
+			if ( ! function_exists( 'wp_register_ability' ) ) {
+				return;
+			}
+
+			foreach ( $operations as $operation ) {
+				self::register_operation( $plugin_slug, $category_slug, $operation );
+			}
+		}
+
+		/**
+		 * Registers a single ability.
+		 *
+		 * @since NEXT
+		 *
+		 * @param string              $plugin_slug   Plugin slug.
+		 * @param string              $category_slug Category slug.
+		 * @param array<string,mixed> $operation     Operation manifest.
+		 * @return void
+		 */
+		private static function register_operation( $plugin_slug, $category_slug, array $operation ) {
+			if ( empty( $operation['callback'] ) || ! is_callable( $operation['callback'] ) ) {
+				return;
+			}
+
+			$ability = isset( $operation['ability'] ) && is_array( $operation['ability'] ) ? $operation['ability'] : array();
+			$name    = ! empty( $ability['name'] ) ? $ability['name'] : $plugin_slug . '/' . str_replace( '.', '-', $operation['id'] );
+			$label   = ! empty( $ability['label'] ) ? $ability['label'] : ucwords( str_replace( array( '.', '-' ), ' ', $operation['id'] ) );
+			$args    = array(
+				'label'               => $label,
+				'description'         => ! empty( $ability['description'] ) ? $ability['description'] : sprintf(
+					/* translators: %s: operation id. */
+					__( 'Executes the %s operation.', '__PLUGIN_SLUG__' ),
+					$operation['id']
+				),
+				'category'            => $category_slug,
+				'output_schema'       => ! empty( $operation['output_schema'] ) ? $operation['output_schema'] : array(
+					'type'       => 'object',
+					'properties' => array(),
+				),
+				'permission_callback' => function ( $input = null ) use ( $plugin_slug, $operation ) {
+					$request = self::prepare_request( $operation, $input );
+					if ( is_wp_error( $request ) ) {
+						return $request;
+					}
+
+					return WP_Plugin_Base_REST_Operations_Permissions::check_operation( $plugin_slug, $operation, $request );
+				},
+				'execute_callback'    => function ( $input = null ) use ( $operation ) {
+					$request = self::prepare_request( $operation, $input );
+					if ( is_wp_error( $request ) ) {
+						return $request;
+					}
+
+					return WP_Plugin_Base_REST_Operations_Responses::unwrap(
+						WP_Plugin_Base_REST_Operations_Executor::execute( $operation, $request )
+					);
+				},
+				'meta'                => array(
+					'show_in_rest' => ! empty( $ability['show_in_rest'] ),
+					'annotations'  => ! empty( $operation['annotations'] ) && is_array( $operation['annotations'] ) ? $operation['annotations'] : array(),
+				),
+			);
+
+			if ( ! empty( $operation['input_schema'] ) ) {
+				$args['input_schema'] = $operation['input_schema'];
+			}
+
+			$registered = wp_register_ability( $name, $args );
+			if ( null === $registered && function_exists( '_doing_it_wrong' ) ) {
+				_doing_it_wrong(
+					__METHOD__,
+					sprintf(
+						/* translators: %s: ability name. */
+						esc_html__( 'Could not register operation ability %s. Check its manifest and category.', '__PLUGIN_SLUG__' ),
+						esc_html( $name )
+					),
+					'1.9.0'
+				);
+			}
+		}
+		/**
+		 * Builds the same sanitized request for permission checks and execution.
+		 *
+		 * @since NEXT
+		 *
+		 * @param array<string,mixed> $operation Operation manifest.
+		 * @param mixed               $input Ability input.
+		 * @return WP_REST_Request|WP_Error
+		 */
+		private static function prepare_request( array $operation, $input ) {
+			$prepared_input = WP_Plugin_Base_REST_Operations_Input::prepare_input( $operation, $input );
+			if ( is_wp_error( $prepared_input ) ) {
+				return $prepared_input;
+			}
+
+			$request = new WP_REST_Request(
+				is_array( $operation['methods'] ) ? reset( $operation['methods'] ) : $operation['methods'],
+				$operation['route']
+			);
+			// GET/HEAD do not expose body params through get_param().
+			foreach ( $prepared_input as $key => $value ) {
+				$request->set_param( $key, $value );
+			}
+
+			return $request;
+		}
+	}
+}
