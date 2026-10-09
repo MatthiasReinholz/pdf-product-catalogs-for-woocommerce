@@ -80,6 +80,22 @@ phpstan-wordpress 2.0.4 and PHPUnit 9.6.37. Actual locked installation, platform
 checks and quality-tool execution passed on PHP 8.0, including actual Doctrine object instantiation. The full foundation gate
 also uses Composer's real solver to reject incompatible locked PHP requirements.
 
+## October 9, 2026 Markdown Tooling Review
+
+The latest compatible Markdown CLI still depends on `braces` 3.0.3. Its staged
+bootstrap now uses the foundation's canonical integrity-bound depth-limit
+backport before activating the tool; no second patch implementation or npm
+lifecycle hook is introduced. The raw upstream advisory remains visible, and
+read-only qualification verifies the installed bytes and complete advisory graph.
+See [the shared remediation contract](npm-security-remediations.md) for provenance,
+manifest ownership and removal criteria.
+
+The `smol-toml` override advances from 1.7.1 to the published compatible 1.9.0 fix,
+retaining its Node 18+ requirement and the bundle's existing Node floor. The
+existing package API and full repository Markdown commands are qualified with
+the new lock. Unrelated low-severity KaTeX findings remain visible; this is not a
+claim that the complete tool graph has zero raw findings.
+
 ## September 25, 2026 Review
 
 The four committed npm bundles were audited against the current npm advisory
@@ -177,6 +193,12 @@ its default CommonJS export. The isolated installer applies the maintained
 `scripts/lib/patch_wordpress_env_git.cjs` adaptation to the two upstream imports,
 using the supported named export. It verifies exact package versions and both
 upstream source SHA-256 digests before writing either file; drift aborts install.
+Exact already-adapted bytes are accepted idempotently; unknown versions, changed
+bytes and linked inputs are rejected. The installer prepares an isolated sibling
+staging directory and activates it only after npm and adaptation both succeed.
+It accepts only the private empty directory supplied by its callers; an existing
+installation is never overwritten. Failed preparation, including a partial source
+write, is discarded without publishing a usable partial tool installation.
 No unsafe Git options or global module interception are introduced. Remove the
 patch and override together when an upstream release supports patched simple-git.
 The real wp-env download implementation is tested with clone, repeated fetch,
@@ -186,6 +208,13 @@ This removes the critical and high findings that previously stopped foundation
 checks and unrelated dependency candidates. Keep the override scoped to this
 isolated development tool; it does not change plugin runtime dependencies.
 Qualify actual WordPress environment lifecycle behavior whenever updating it.
+An upstream update intentionally blocks until reviewed: a successful dependency
+resolution is not compatibility evidence. When upstream fixes its imports, remove
+the adaptation and override in one owned change, run the real Git-source tests,
+the WordPress runtime and Plugin Check gates, and the unchanged dependency audit.
+Do not merely refresh expected hashes to make an unknown release pass. Keep
+published foundation releases immutable and adopt the newly qualified release
+through normal signed update validation.
 
 The advisory audit still reports moderate findings through upstream `js-yaml` 3
 and its `argparse`/`sprintf-js` chain. There is no patched compatible `sprintf-js`
