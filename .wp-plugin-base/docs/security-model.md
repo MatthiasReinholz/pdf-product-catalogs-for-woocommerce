@@ -18,13 +18,13 @@ The intended default for the foundation repository and every project that consum
 The current hardened baseline allows only these external actions:
 
 - `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1`
-- `actions/setup-node@820762786026740c76f36085b0efc47a31fe5020`
-- `actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a`
-- `actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c`
+- `actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1`
+- `actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9`
+- `actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333`
 - `actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8`
-- `github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2`
-- `ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc`
-- `shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240`
+- `github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee`
+- `ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e`
+- `shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962`
 
 The foundation intentionally does not depend on `peter-evans/create-pull-request`, `softprops/action-gh-release`, or `10up/action-wordpress-plugin-deploy`. Those duties are handled by repo-local scripts using `gh` or `svn`.
 
@@ -131,13 +131,13 @@ Before `update-foundation` opens a PR, it verifies:
 - the release author is on the allowed author list
 - the vendored refresh is performed from the verified commit SHA, not by re-resolving the tag later
 
-For GitHub-hosted releases, consumers can also verify a released plugin ZIP independently after downloading it from the authoritative release host:
+For GitHub-hosted releases with `GITHUB_ARTIFACT_ATTESTATIONS_ENABLED=true`, consumers can also verify a released plugin ZIP independently after downloading it from the authoritative release host:
 
 ```bash
 gh attestation verify --owner <github-owner> path/to/plugin.zip
 ```
 
-That verifies the GitHub build attestation attached to the published release artifact without relying on local trust in the release notes alone. GitLab downstreams still rely on the Sigstore bundle and release metadata verification path documented below.
+That verifies the GitHub build attestation attached to the published release artifact without relying on local trust in the release notes alone. GitHub projects with attestations disabled and GitLab downstreams use the required Sigstore bundle verification path documented below. Disabling plugin attestations does not change foundation source verification.
 
 Release workflows now also attach a CycloneDX SBOM for the packaged artifact contents and a Sigstore keyless bundle for the released blob. Those cover different trust questions:
 
