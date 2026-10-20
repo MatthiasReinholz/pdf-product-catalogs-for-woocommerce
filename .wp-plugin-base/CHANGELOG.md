@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.10.10
+
+* Override `markdown-it` to 15.0.3 in the Markdown tool bundle for GHSA-r7fv-28h4-cvq7; markdownlint-cli2 0.23.3 pins the affected 15.0.1 exactly. The foundation configures no markdown-it custom rules, and 15.0.3 also carries the quadratic reference-definition and inline HTML parsing fixes. Remediation digests are renewed; the admin starters and fixture already resolve the patched 14.3.2.
+* Update signature-verified Syft 1.55.0, which remediates five `golang.org/x/net` advisories including one critical. CycloneDX SBOM output is unchanged.
+* Group `@wordpress/*` updates (`wordpress-packages`) in every generated child Dependabot npm entry, root and admin UI, so shared WordPress package releases arrive as one proposal per directory. Existing children receive the group on their next foundation sync, including children upgrading from v1.9.x without an ownership receipt: earlier vendored templates still render their original bytes during ownership recovery.
+* Fail closed when a child Dependabot template contains unsupported additions or renders output that does not match the selected update policies.
+
+## v1.10.9
+
+* Resolve nine compatible npm advisories in both admin starters and the existing-application fixture with narrow overrides: `postcss-selector-parser` 7.1.6, `js-yaml@^5.0.0` 5.4.1, `smol-toml` 1.9.0 and `katex` 0.18.10. The Markdown tool bundle adopts the same KaTeX release with renewed remediation digests; starter production builds are byte-identical.
+* Update both admin starters to the October 2026 WordPress package set: `@wordpress/components` 42, `@wordpress/element` 9, `@wordpress/dataviews` 20 and `@wordpress/scripts` 36.1, with matching api-fetch, data and i18n releases. React and React DOM remain 18.3.1, and generated `index.asset.php` dependency lists are unchanged.
+* DataViews 20 requires `@wordpress/dependency-extraction-webpack-plugin` 6.57 or newer, normally supplied by `@wordpress/scripts` 36.1. Older extraction emits a `wp-react-inert-value` handle that WordPress 7.1 does not register, so WordPress refuses to enqueue the admin script. Upgrade DataViews and scripts in one change, including in custom webpack setups.
+* Admin starter files are child-owned and sync does not update them. Existing children should copy the new package versions and overrides from the foundation seeds, remove any copied `typescript-eslint` 8.70.0 override, regenerate the lockfile, and rerun install, build and lint. Import DataViews styles through an entry-level stylesheet: a direct `@wordpress/dataviews/build-style/style.css` import becomes an unregistered script dependency.
+* Adopt reviewed GitHub Actions releases: setup-php 2.40.0, scorecard-action 2.5.0, download-artifact 8.0.2, setup-node 7.1.0, upload-artifact 7.0.2 and codeql-action/upload-sarif 4.39.0. Foundation sync migrates managed and child-owned workflows from the previous pins; the workflow audit rejects all other pins.
+* Update signature-verified Syft 1.54.1, the `composer:2` image digest, Semgrep 1.181.0, quality-pack PHPStan 2.3.1, and the locked npm audit producer `@npmcli/arborist` 9.9.3 with a renewed inventory digest. Audit thresholds, scanner rules and runtime requirements are unchanged.
+* Keep the WordPress environment tool's staging directory cleanup reliable under macOS bash 3.2, and require aligned overrides, `@wordpress/*` and React versions across the admin seeds and fixture, with grouped Dependabot updates for those packages.
+* Keep `@wordpress/env` at 11.16.0: 11.17.0 requires WordPress Playground releases that declare Node 24.18, above the supported Node 22 floor. Three advisories without an accepted fix remain documented with reachability and a 2026-11-19 review date: `mcp` (pinned by Semgrep, CLI-only use), `sprintf-js` (no patched release) and `braces` (remediated by the existing verified backport).
+
+## v1.10.8
+
+* Add an explicit GitHub plugin attestation setting for private repositories without Enterprise Cloud. The default remains enabled.
+* Preserve mandatory package signing, signing identity verification, SBOMs, immutable payload checks, and foundation source provenance across all release paths.
+* Test configuration validation and release workflow boundaries, and document historical-tag recovery behavior.
+
 ## v1.10.7
 
 * Qualify WordPress tooling in an isolated staging directory before atomic activation. Reject unknown dependency versions, source drift and linked inputs; accept exact previously adapted bytes idempotently without changing the existing compatibility transformation. Preserve existing installations and test failed preparation, activation conflicts and actual Git operations.

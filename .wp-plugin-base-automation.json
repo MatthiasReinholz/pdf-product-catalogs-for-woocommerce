@@ -3,11 +3,11 @@
   "profile": "managed",
   "files": {
     ".github/dependabot.yml": "3a7e49f9443f19726e46630f1d082314b4b324c77c410a5b99dcc0063d36c253",
-    ".github/workflows/ci.yml": "425cc42bffe7c395eefcd0576963e886b07b7327dd42c9d2a2ed56ee035a10be",
-    ".github/workflows/finalize-release.yml": "c98e3a88aecb353841e528d22e37aea7a0686456bc2a74f0c7dd19db9a8c4d37",
-    ".github/workflows/prepare-release.yml": "98b660a07c6858816fcfab551af49df78ba81c906861942ea72452a6656e5153",
-    ".github/workflows/publish-tag-release.yml": "dc6394deffe4a39caf02cc278fd0e7bf6d6c46848e74cbb4dd13514ae83e540d",
-    ".github/workflows/release.yml": "9f0fbef118794b3b6c5e1b08eed73d3540525da867332ead31f264153b135723",
-    ".github/workflows/update-foundation.yml": "44dc1332953a094aef8662c885ac9ec299ad5a944a1f488a3ea5a62a48ae3fef"
+    ".github/workflows/ci.yml": "d90be51477ab156a54aaa1d53065d61a91596653b91c30d231e8250df0bf7822",
+    ".github/workflows/finalize-release.yml": "7d6850f1a01fd8a7e5abbe3165e9e26213b6efbc7ac52fa23e06135f3c777998",
+    ".github/workflows/prepare-release.yml": "4dc26704817250c2386a1ddf3c2fb33c77f808515470dd9c29be0c18c58ddcdd",
+    ".github/workflows/publish-tag-release.yml": "a66eaceeffba156388d9eb85ab0c8a1e830682e836dc90f7562ce8201c1e51bd",
+    ".github/workflows/release.yml": "46daf42f1d736179bb49a3edb2a2c74ab74a110773a142847b09ae25b731e76e",
+    ".github/workflows/update-foundation.yml": "4193531401d0f3b92d26313fa57b57a89c952b4e085c2803917a78983ef67244"
   }
 }
