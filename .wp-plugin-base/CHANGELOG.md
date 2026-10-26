@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.10.14
+
+* Keep remediation provenance public by removing unused internal origin attribution. Public upstream references, patch/regression bytes, complete package inventories and every integrity digest remain unchanged.
+* Resolve compatible development dependency advisories in the WordPress environment tool, both admin starters and the application fixture. Pair Puppeteer/browser helpers with their supported Zod API and preserve Node support, direct WordPress/React pins and audit thresholds. Existing projects adopt these fixes in their own manifests and lockfiles; sync preserves those files.
+
+## v1.10.13
+
+* Update the managed WordPress environment tooling to `@wordpress/env` 11.17.0 without raising the Node.js floor. Its Playground runtime packages declare Node.js 24.18 but are loaded only for `wp-env --runtime=playground`, which the foundation never uses. npm's whole-tree `engine-strict` is replaced by an explicit check of the tool manifest's engines and every package the Docker runtime loads. The redundant `adm-zip`, `ajv` and `tmp` overrides are removed.
+* New projects default to `NODE_VERSION=24`, and foundation CI runs on Node.js 24. Node.js 22 remains supported and qualified with a real WordPress environment; existing projects keep their configured runtime and need no change.
+
+## v1.10.12
+
+* Read workflow sources as UTF-8 when rewriting action pins, so sync migration and the managed-workflow pin check keep working under a C/POSIX locale (minimal runner images, GitLab runners without `LANG`) when non-ASCII text precedes a `uses:` reference.
+
+## v1.10.11
+
+* Let projects apply their own dependency updates without breaking validation, Plugin Check, packaging or release. Project validation accepts any full-SHA action pin, including a Dependabot update in a managed workflow; every other managed-workflow edit still fails. Sync keeps project pins on every later sync, upgrades reviewed predecessors and never downgrades. The foundation's own workflow audit still requires reviewed pins.
+* Generated child Dependabot configuration no longer ignores actions, so action version and security updates reach every workflow. Earlier vendored templates still render their original bytes during ownership recovery.
+* Bind npm remediations to each installed package copy instead of whole `package.json`/`package-lock.json` digests, so project dependency updates keep the reviewed `braces` backport valid. Existing manifests with digests keep working. Other versions or removed packages are left to npm audit, and an advisory is waived only when every affected copy is verified. The managed admin build applies the backport, and both starters seed it, so new admin UI projects pass the security pack audit.
+* Report advisories in the foundation-owned quality and security pack tool locks as warnings in projects instead of failing their CI; foundation validation still blocks on them.
+* Resolve the critical `certifi` advisory (GHSA-6q48-6c7w-9gw2) in the Semgrep tooling, and the `follow-redirects`, `launch-editor` and `markdown-it` advisories in both admin starters, within their existing ranges. Starters are child-owned: existing projects receive these through their own Dependabot.
+* Update signature-verified Cosign 3.1.4.
+
 ## v1.10.10
 
 * Override `markdown-it` to 15.0.3 in the Markdown tool bundle for GHSA-r7fv-28h4-cvq7; markdownlint-cli2 0.23.3 pins the affected 15.0.1 exactly. The foundation configures no markdown-it custom rules, and 15.0.3 also carries the quadratic reference-definition and inline HTML parsing fixes. Remediation digests are renewed; the admin starters and fixture already resolve the patched 14.3.2.
