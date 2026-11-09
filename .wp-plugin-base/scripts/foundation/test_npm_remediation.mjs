@@ -109,9 +109,10 @@ for (const [name, change, pattern] of [
   ['unknown remediation', root => manifest(root, { remediations: ['unreviewed-advisory'] }), /Unknown remediation/],
   ['duplicate remediation', root => manifest(root, { remediations: ['braces-3.0.3', 'braces-3.0.3'] }), /Duplicate/],
   ['unknown manifest field', root => manifest(root, { ignore: ['all'] }), /Unknown or missing/],
-  ['manifest drift', root => writeFileSync(join(root, 'package.json'), '{}'), /Reviewed hash changed/],
-  ['lock drift', root => writeFileSync(join(root, 'package-lock.json'), '{}'), /Reviewed hash changed/],
-  ['wrong version', root => { const p = join(root, 'node_modules/braces/package.json'); const v = readJson(p); v.version = '3.0.4'; writeJson(p, v); }, /Unreviewed package/],
+  ['unsupported lock', root => writeFileSync(join(root, 'package-lock.json'), '{}'), /Unsupported workspace or npm lock format/],
+  ['invalid legacy digest', root => manifest(root, { lockfileSha256: 'stale' }), /Invalid SHA256 digest/],
+  ['wrong identity', root => { const p = join(root, 'node_modules/braces/package.json'); const v = readJson(p); v.name = 'impostor'; writeJson(p, v); }, /Unreviewed package identity/],
+  ['changed reviewed lock entry', root => { const p = join(root, 'package-lock.json'); const v = readJson(p); v.packages['node_modules/braces'].integrity = 'sha512-unreviewed'; writeJson(p, v); }, /Unreviewed package lock entry/],
   ['untracked package file', root => writeFileSync(join(root, 'node_modules/braces/extra.js'), ''), /Pristine bytes differ/],
   ['linked package', root => symlinkSync(join(root, 'node_modules/braces'), join(root, 'node_modules/alias')), /Linked package/],
   ['hidden bin package', root => mkdirSync(join(root, 'node_modules/.bin/braces'), { recursive: true }), /Package directory hidden/],
@@ -121,6 +122,37 @@ for (const [name, change, pattern] of [
   ['workspace project', root => { const p = join(root, 'package.json'); const v = readJson(p); v.workspaces = ['child']; writeJson(p, v); manifest(root); }, /Unsupported workspace/],
 ]) test(`${name} fails closed`, () => assert.throws(() => applyRemediations(changeProject(change)), pattern));
 function changeProject(change) { const root = project(); change(root); return root; }
+
+test('project dependency updates keep a verified remediation without renewed digests', () => {
+  const root = project();
+  // Stale legacy digests and unrelated manifest/lock changes, as after a Dependabot update.
+  const pkg = readJson(join(root, 'package.json'));
+  writeJson(join(root, 'package.json'), { ...pkg, description: 'Updated by the project' });
+  const lock = readJson(join(root, 'package-lock.json'));
+  lock.packages[''] = { ...lock.packages[''], description: 'Updated by the project' };
+  writeJson(join(root, 'package-lock.json'), lock);
+  assert.equal(applyRemediations(root)[0].nodes.length, 1);
+  writeJson(join(root, 'npm-remediations.json'), { schemaVersion: 1, remediations: ['braces-3.0.3'] });
+  assert.equal(verifyRemediations(root)[0].nodes.length, 1);
+});
+
+test('a scoped package sharing the basename is not treated as the remediated package', () => {
+  const root = project();
+  mkdirSync(join(root, 'node_modules/@types/braces'), { recursive: true });
+  writeJson(join(root, 'node_modules/@types/braces/package.json'), { name: '@types/braces', version: '3.0.4' });
+  assert.equal(applyRemediations(root)[0].nodes.length, 1);
+});
+
+test('a removed or different package version is left to the audit', () => {
+  const root = project();
+  const path = join(root, 'node_modules/braces/package.json');
+  writeJson(path, { ...readJson(path), version: '3.0.4' });
+  const parse = digest(join(root, 'node_modules/braces/lib/parse.js'));
+  assert.deepEqual(applyRemediations(root), []);
+  assert.equal(digest(join(root, 'node_modules/braces/lib/parse.js')), parse);
+  rmSync(join(root, 'node_modules/braces'), { recursive: true });
+  assert.deepEqual(applyRemediations(root), []);
+});
 
 test('real audit uses the locked producer despite incompatible ambient npm and hostile defaults', () => {
   const root = project();
@@ -196,12 +228,18 @@ for (const [name, change] of [
   ['missing reverse edge', r => { r.data.vulnerabilities.braces.effects = []; }],
   ['unknown source', r => { r.data.vulnerabilities.consumer.via = ['absent']; }],
   ['changed advisory', r => { r.data.vulnerabilities.braces.via[0].range = '*'; }],
-  ['unverified node', r => { r.data.vulnerabilities.braces.nodes.push('node_modules/other/braces'); }],
   ['cycle', r => { r.data.vulnerabilities.braces.via = ['consumer']; r.data.vulnerabilities.consumer.effects = ['braces']; }],
-  ['hidden severity', r => { r.data.vulnerabilities.consumer.severity = 'low'; }],
+  ['severity contradicting counts', r => { r.data.vulnerabilities.consumer.severity = 'low'; }],
 ]) test(`audit rejects ${name}`, () => {
   const input = { data: report(), status: 1 }; change(input);
   assert.throws(() => classifyAudit(JSON.stringify(input.data), input.status, verified));
+});
+test('a copy the backport does not cover keeps the advisory blocking', () => {
+  const r = report();
+  r.vulnerabilities.braces.nodes.push('node_modules/other/node_modules/braces');
+  const decision = classifyAudit(JSON.stringify(r), 1, verified);
+  assert.deepEqual(decision.blocked, ['braces', 'consumer']);
+  assert.deepEqual(classifyAudit(JSON.stringify(report()), 1, []).blocked, ['braces', 'consumer']);
 });
 test('unrelated findings remain visible and enforce the caller threshold', () => {
   const r = report();
@@ -236,9 +274,80 @@ test('a second advisory on the remediated package is never removed', () => {
 test('unexplained severity inflation and extra graph edges fail closed', () => {
   const inflated = report();
   inflated.vulnerabilities.consumer.severity = 'critical';
+  inflated.metadata.vulnerabilities.high--; inflated.metadata.vulnerabilities.critical++;
   assert.throws(() => classifyAudit(JSON.stringify(inflated), 1, verified), /Unexplained aggregate/);
   const extra = report(); extra.vulnerabilities.braces.effects.push('absent');
   assert.throws(() => classifyAudit(JSON.stringify(extra), 1, verified), /Incomplete reverse/);
+});
+
+function graphReport(vulnerabilities) {
+  const counts = { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: Object.keys(vulnerabilities).length };
+  for (const item of Object.values(vulnerabilities)) counts[item.severity]++;
+  return { auditReportVersion: 2, vulnerabilities, metadata: { vulnerabilities: counts } };
+}
+function graphNode(name, severity, via, effects) {
+  return { name, severity, via, effects, nodes: [`node_modules/${name}`] };
+}
+const graphAdvisory = (name, severity) => ({ name, severity, url: `https://example.invalid/advisories/${name}`, range: '*' });
+
+test('lower npm aggregates retain the severity of every reachable advisory', () => {
+  const r = graphReport({
+    jest: graphNode('jest', 'low', ['jest-runtime'], []),
+    'jest-runtime': graphNode('jest-runtime', 'moderate', ['leaf'], ['jest']),
+    leaf: graphNode('leaf', 'moderate', [graphAdvisory('leaf', 'moderate')], ['jest-runtime']),
+  });
+  const result = classifyAudit(JSON.stringify(r), 1, []);
+  assert.deepEqual(result.blocked, []);
+  assert.deepEqual(result.residual.map(item => item.severity), ['moderate', 'moderate', 'moderate']);
+  assert.equal(result.residual[0].reportedSeverity, 'low');
+  assert.deepEqual(classifyAudit(JSON.stringify(r), 1, [], 'moderate').blocked, Object.keys(r.vulnerabilities));
+});
+
+test('an advisory-backed cycle has complete sources regardless of report order', () => {
+  const vulnerabilities = {
+    eslint: graphNode('eslint', 'moderate', ['@eslint-community/eslint-utils', 'leaf'], ['@eslint-community/eslint-utils']),
+    '@eslint-community/eslint-utils': graphNode('@eslint-community/eslint-utils', 'low', ['eslint'], ['eslint']),
+    leaf: graphNode('leaf', 'moderate', [graphAdvisory('leaf', 'moderate')], ['eslint']),
+  };
+  for (const entries of [Object.entries(vulnerabilities), Object.entries(vulnerabilities).reverse()]) {
+    const result = classifyAudit(JSON.stringify(graphReport(Object.fromEntries(entries))), 1, []);
+    assert.deepEqual(result.blocked, []);
+    assert.equal(result.residual.length, 3);
+    for (const item of result.residual) {
+      assert.equal(item.severity, 'moderate');
+      assert.deepEqual(item.sources, [{ url: 'https://example.invalid/advisories/leaf', package: 'leaf', severity: 'moderate', range: '*' }]);
+    }
+  }
+});
+
+test('an unexplained cyclic component is rejected even beside an explained parent', () => {
+  const r = graphReport({
+    parent: graphNode('parent', 'moderate', [graphAdvisory('parent', 'moderate'), 'cycle-a'], []),
+    'cycle-a': graphNode('cycle-a', 'low', ['cycle-b'], ['parent', 'cycle-b']),
+    'cycle-b': graphNode('cycle-b', 'low', ['cycle-a'], ['cycle-a']),
+  });
+  assert.throws(() => classifyAudit(JSON.stringify(r), 1, []), /No reachable advisory evidence/);
+});
+
+test('cycles preserve exact backport coverage and cannot waive an uncovered copy', () => {
+  const r = report();
+  r.vulnerabilities.braces.via.push('consumer');
+  r.vulnerabilities.consumer.effects.push('braces');
+  assert.deepEqual(classifyAudit(JSON.stringify(r), 1, verified).locallyRemediated, ['braces', 'consumer']);
+  r.vulnerabilities.braces.nodes.push('node_modules/other/node_modules/braces');
+  assert.deepEqual(classifyAudit(JSON.stringify(r), 1, verified).blocked, ['braces', 'consumer']);
+});
+
+test('understated aggregates cannot hide high or critical residual advisories', () => {
+  const r = report();
+  for (const item of Object.values(r.vulnerabilities)) item.severity = 'low';
+  const high = classifyAudit(JSON.stringify(graphReport(r.vulnerabilities)), 1, []);
+  assert.deepEqual(high.blocked, ['braces', 'consumer']);
+  assert(high.residual.every(item => item.severity === 'high' && item.reportedSeverity === 'low'));
+  r.vulnerabilities.braces.via.push(graphAdvisory('braces', 'critical'));
+  const critical = classifyAudit(JSON.stringify(graphReport(r.vulnerabilities)), 1, verified);
+  assert.deepEqual(critical.blocked, ['braces', 'consumer']);
+  assert(critical.residual.every(item => item.severity === 'critical'));
 });
 
 test('containment follows POSIX and Windows separators, drive and UNC rules', () => {

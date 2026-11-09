@@ -2,12 +2,21 @@
   "schema_version": 1,
   "profile": "managed",
   "files": {
-    ".github/dependabot.yml": "3a7e49f9443f19726e46630f1d082314b4b324c77c410a5b99dcc0063d36c253",
+    ".github/dependabot.yml": "89b0ac216125cd11a5806de70472a5d4cb470a2143606d62a03993e13e6dd02e",
     ".github/workflows/ci.yml": "d90be51477ab156a54aaa1d53065d61a91596653b91c30d231e8250df0bf7822",
     ".github/workflows/finalize-release.yml": "7d6850f1a01fd8a7e5abbe3165e9e26213b6efbc7ac52fa23e06135f3c777998",
     ".github/workflows/prepare-release.yml": "4dc26704817250c2386a1ddf3c2fb33c77f808515470dd9c29be0c18c58ddcdd",
     ".github/workflows/publish-tag-release.yml": "a66eaceeffba156388d9eb85ab0c8a1e830682e836dc90f7562ce8201c1e51bd",
     ".github/workflows/release.yml": "46daf42f1d736179bb49a3edb2a2c74ab74a110773a142847b09ae25b731e76e",
     ".github/workflows/update-foundation.yml": "4193531401d0f3b92d26313fa57b57a89c952b4e085c2803917a78983ef67244"
+  },
+  "pin_neutral": {
+    ".github/dependabot.yml": "89b0ac216125cd11a5806de70472a5d4cb470a2143606d62a03993e13e6dd02e",
+    ".github/workflows/ci.yml": "6f38019e7d75e9df7c3321d38d6ea9e89fb361bdcf5f7a83a511232ccb023696",
+    ".github/workflows/finalize-release.yml": "607c5a76afc502e3f55307ccf3409303a40ddf5bc78360e0db5b3f9edcea011b",
+    ".github/workflows/prepare-release.yml": "2f92be29b8fff777d02c4bef00abde7b751f2cb1b04d67e4629b82451026334e",
+    ".github/workflows/publish-tag-release.yml": "4432d6e14c838a357ea35c104c5bcd4444cd89ae64f697a837b42659647a6741",
+    ".github/workflows/release.yml": "47fa34dd84aca6947798fc2c0223aa78fce5e38022da3afce125464de0d554a7",
+    ".github/workflows/update-foundation.yml": "78ea9c0d745d688412c5f7eb15eae53243868dd7cafb56852efb862b47b1e88b"
   }
 }

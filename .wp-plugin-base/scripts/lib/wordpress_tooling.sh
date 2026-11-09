@@ -34,6 +34,9 @@ wp_plugin_base_install_wordpress_env() (
   (
     cd "$staging_dir" || return 1
     npm ci --no-audit --no-fund >/dev/null || return $?
+    # .npmrc disables npm's whole-tree engine-strict; enforce the engines of the
+    # packages the Docker runtime loads before the tool can be activated.
+    node "$source_dir/../../scripts/lib/check_wordpress_env_engines.cjs" "$staging_dir" "$(npm --version)" || return $?
     node "$source_dir/../../scripts/lib/patch_wordpress_env_git.cjs" "$staging_dir" || return $?
   ) || return $?
   node - "$staging_dir" "$destination_dir" <<'NODE'
@@ -126,4 +129,24 @@ wp_plugin_base_wordpress_env_start_with_retry() {
   rm -f "$start_log"
   echo "Failed to start wp-env after ${max_attempts} attempts." >&2
   return 1
+}
+
+# Foundation-owned tool locks (quality and security pack) change only with a
+# foundation release, so an advisory there must not block a project's CI or
+# release. Projects get a warning; foundation validation sets
+# WP_PLUGIN_BASE_FOUNDATION_TOOL_AUDIT=strict and blocks on the same findings.
+wp_plugin_base_audit_foundation_tool_lock() {
+  local context="$1"
+  shift
+
+  if wp_plugin_base_run_with_retry 3 5 "$context" "$@"; then
+    return 0
+  fi
+  if [ "${WP_PLUGIN_BASE_FOUNDATION_TOOL_AUDIT:-report}" = strict ]; then
+    return 1
+  fi
+  echo "Warning: ${context} did not pass for wp-plugin-base development tooling (advisories, or the audit could not run). Update wp-plugin-base to receive reviewed fixes; project validation continues." >&2
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    echo "::warning title=wp-plugin-base tooling audit::${context} did not pass for foundation-owned tooling; update wp-plugin-base."
+  fi
 }
