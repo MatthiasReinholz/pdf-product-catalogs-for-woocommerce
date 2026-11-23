@@ -105,7 +105,18 @@ assert_file_contains_literal "$ROOT_DIR/templates/child/.github/workflows/releas
 assert_file_contains_literal "$ROOT_DIR/scripts/release/publish_github_release.sh" '--verify-tag' "GitHub release publication must verify that the tag already exists."
 assert_file_contains_literal "$ROOT_DIR/scripts/release/publish_github_release.sh" '--draft=false' "GitHub release repair must clear draft state after assets are present."
 assert_file_contains_literal "$ROOT_DIR/scripts/ci/install_lint_tools.sh" '--require-hashes' "Foundation lint tool bootstrap must install Python tools from hash-pinned requirements."
+assert_file_contains_literal "$ROOT_DIR/scripts/ci/run_semgrep_security.sh" '--no-trace' "Managed Semgrep scans must keep OpenTelemetry header extraction disabled."
+assert_file_contains_literal "$ROOT_DIR/.github/workflows/foundation-ci.yml" 'semgrep --no-trace --test' "Semgrep rule tests must keep OpenTelemetry header extraction disabled."
 assert_file_contains_literal "$ROOT_DIR/scripts/ci/install_lint_tools.sh" 'npm ci --ignore-scripts --no-audit --no-fund' "Foundation lint tool bootstrap must install markdownlint from the committed npm lockfile."
+# Starter package updates must also update the managed migration guide.
+admin_ui_guide="$ROOT_DIR/templates/child/admin-ui-pack/docs/admin-ui-pack.md"
+admin_ui_dataviews_version="$(jq -er '.devDependencies["@wordpress/dataviews"]' "$ROOT_DIR/templates/child/admin-ui-pack-seed-dataviews/.wp-plugin-base-admin-ui/package.json")"
+admin_ui_scripts_version="$(jq -er '.devDependencies["@wordpress/scripts"]' "$ROOT_DIR/templates/child/admin-ui-pack-seed-basic/.wp-plugin-base-admin-ui/package.json")"
+admin_ui_extraction_version="$(jq -er '.packages["node_modules/@wordpress/dependency-extraction-webpack-plugin"].version' "$ROOT_DIR/templates/child/admin-ui-pack-seed-dataviews/.wp-plugin-base-admin-ui/package-lock.json")"
+assert_file_contains_literal "$admin_ui_guide" "DataViews $admin_ui_dataviews_version" "Admin UI guide must name the current DataViews version."
+assert_file_contains_literal "$admin_ui_guide" '@wordpress/scripts` '"$admin_ui_scripts_version" "Admin UI guide must name the current WordPress scripts version."
+assert_file_contains_literal "$admin_ui_guide" '@wordpress/dependency-extraction-webpack-plugin` '"$admin_ui_extraction_version" "Admin UI guide must name the current qualified extraction version."
+
 assert_file_contains_literal "$ROOT_DIR/scripts/foundation/check_wordpress_env_tooling.sh" 'npm audit --package-lock-only --audit-level=high' "WordPress env tooling check must fail on high-severity committed lockfile advisories."
 assert_file_contains_literal "$ROOT_DIR/scripts/foundation/run_foundation_policy_checks.sh" 'test_validate_config_scope.sh' "Foundation policy checks must include config scope validation tests."
 assert_file_contains_literal "$ROOT_DIR/scripts/foundation/run_foundation_policy_checks.sh" 'test_validate_config_runtime_pack_contracts.sh' "Foundation policy checks must include runtime-pack config contract tests."
@@ -155,6 +166,8 @@ assert_file_contains_literal "$ROOT_DIR/.github/workflows/ci.yml" "github/codeql
 assert_file_contains_literal "$ROOT_DIR/templates/child/.github/workflows/ci.yml" "github/codeql-action/upload-sarif@$reviewed_sarif_pin" "Child CI workflow must pin upload-sarif to the reviewed SHA."
 assert_file_contains_literal "$ROOT_DIR/docs/security-model.md" "github/codeql-action/upload-sarif@$reviewed_sarif_pin" "Security documentation must advertise the reviewed upload-sarif SHA."
 assert_file_contains_literal "$ROOT_DIR/scripts/ci/audit_workflows.sh" 'ruby "$SCRIPT_DIR/../lib/action_pins.rb" "${audit_yaml_files[@]}"' "Workflow audit must use the shared action catalog."
+assert_file_contains_literal "$ROOT_DIR/scripts/foundation/validate.sh" 'export WP_PLUGIN_BASE_FOUNDATION_TOOL_AUDIT=strict' "Foundation validation must block on its own pack tool lock advisories."
+assert_file_contains_literal "$ROOT_DIR/scripts/foundation/validate-full.sh" 'export WP_PLUGIN_BASE_FOUNDATION_TOOL_AUDIT=strict' "The full foundation suite must block on its own pack tool lock advisories."
 ruby - "$ROOT_DIR" <<'RUBY'
 require File.join(ARGV.fetch(0), 'scripts/lib/action_pins')
 policy = WPPluginBaseActionPins.catalog

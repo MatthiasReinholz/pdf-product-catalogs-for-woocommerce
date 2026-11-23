@@ -22,7 +22,8 @@ a green schedule start alone is not evidence of successful maintenance.
   Follow the [candidate isolation contract](update-model.md#candidate-isolation-and-recovery)
   for all external tools. Validate any changed upstream signing identity separately.
 - Check supported releases at least weekly through Dependabot and the external
-  updater. Security fixes should not wait for the normal weekly schedule.
+  updater. GitHub Actions version updates are grouped monthly with a seven-day
+  cooldown. Review urgent security fixes without waiting for a scheduled run.
 - Audit every npm lockfile listed in the inventory and both Python lockfiles under
   `tools/python-lint-tools/` and `tools/python-semgrep/`. Also audit fresh lint-only,
   Semgrep-only, and combined Python environments after hash-locked installation.
@@ -67,6 +68,74 @@ scripts embed them. Previous successful environments remain available to running
 processes; remove an unused old environment only after its processes finish and
 no active wrapper references it. Failed candidate directories are removed.
 
+## November 17, 2026 Dependency Review
+
+Semgrep 1.185.0 still requires MCP 1.29.0 and OpenTelemetry API 1.37.x.
+MCP 1.30.0 and OpenTelemetry API 1.45.2 contain the relevant fixes. Track
+the MCP constraint in [Semgrep #11992](https://github.com/semgrep/semgrep/issues/11992).
+The foundation uses Semgrep as a CLI scanner. The November 17 completion review
+below records which affected paths are unused and the conditions for reopening
+their alerts. GitHub withdrew the `deepmerge` advisory on November 16.
+
+`@wordpress/env` 12.1.0 requires Node 22.13.0 or later. The Docker backend
+keeps 11.17.0 to support Node 22.12.0. The `@wp-playground/storage` override
+selects patched `isomorphic-git` 1.38.6 while its parent still pins 1.37.6.
+
+## November 17, 2026 Completion Review
+
+The merged dependency updates resolved 18 Dependabot alerts, including all six
+then-high findings. The two `deepmerge` alerts also closed after GitHub withdrew
+[GHSA-gcqx-w48m-w2h4](https://github.com/advisories/GHSA-gcqx-w48m-w2h4).
+The following six Semgrep alerts receive repository-specific `not_used` dispositions.
+Their upstream package versions remain affected. These dispositions apply only
+to the invocation and input boundaries reviewed here.
+
+| Alerts | Package and affected use | Foundation evidence | Reopen when |
+| --- | --- | --- | --- |
+| #328, #351, #352, #353 | MCP 1.29.0 stateful HTTP server, bearer authentication, client schema fetching and client redirects | `run_semgrep_security.sh` and foundation CI invoke CLI scanning and rule tests. Neither starts an MCP client or server. | Any supported command enables MCP, or another caller uses these APIs. |
+| #349, #362 | OpenTelemetry API 1.37.0 trace-context header parsing | Both supported Semgrep commands explicitly pass `--no-trace`. In Semgrep 1.185.0, `Telemetry.configure()` returns before instrumentation and `extract()` when tracing is disabled. | Tracing is enabled, environment trace context is accepted, or a new caller parses headers. |
+
+The Semgrep source review used
+[`telemetry.py` at v1.185.0](https://github.com/semgrep/semgrep/blob/v1.185.0/cli/src/semgrep/telemetry.py).
+The resolver-compatible dependency update is pending in
+[Semgrep #12057](https://github.com/semgrep/semgrep/pull/12057).
+Picomatch alert #377 is mitigated by the exact
+[Picomatch #237](https://github.com/micromatch/picomatch/pull/237) backport in the
+verified remediation catalog. All build, lint and audit graphs resolve Picomatch
+4.0.7 and apply that backport before use. The catalog binds the official package
+integrity, complete file inventories, upstream patch commit and security regression.
+The alert's `tolerable_risk` disposition records this verified workaround while
+GitHub still identifies the upstream version as affected.
+The audit producer and WordPress environment also use patched Glob 14.0.2, and
+the audit producer uses IP Address 10.7.4. Their supported commands and engines
+are requalified with these overrides.
+Retain the pinned official releases and adopt the fixes when published.
+Foundation maintainers must review these dispositions by December 17, 2026,
+and at every change to the affected commands. Dependabot alerts and security
+updates remain enabled.
+
+The external-tool review accepts Syft 1.57.0 and the Composer image at
+`sha256:8de2184c6de224f4689e8f80ed5f5edaf0030b6b8b7839a22a2bcb6722ac87d0`.
+Syft's checksum manifest verifies against its exact publisher workflow identity.
+The Composer digest is from the official Docker Library image and is exercised
+by the foundation checks. The older Composer PRs #448 and #460 are superseded.
+
+WordPress Env 12.1.0 (#472) requires Node 22.13.0, above the supported
+Docker-tool floor of 22.12.0, so that proposal is declined.
+The coordinated WordPress package proposals #457–#459 were initially declined,
+then qualified together against the supported applications. The accepted set uses
+api-fetch 8.1, components 44, data 11.1, element 10.1, i18n 7.1, scripts 37.1 and
+DataViews 22 with React 18. The basic starter builds and lints with its original
+four registered WordPress 6.9 asset handles. Every emitted DataViews and application
+fixture handle is registered in WordPress 7.1.0 and 7.1.2.
+Standalone browser acceptance covers both starters, including search, sorting,
+pagination, page resets and translated filters. DataViews 22 keeps the sort menu
+open after choosing a direction, so the browser test dismisses that menu with
+Escape before clicking pagination. The application fixture also passes type
+checking, lint, unit tests, production build and runtime import tests.
+Its license assertion derives the expected DataViews version from its manifest.
+Review the deferred WordPress Env migration by December 17, 2026.
+
 ## PHP Quality Tool Compatibility
 
 The managed quality-tool manifest fixes Composer's resolution platform at PHP
@@ -75,8 +144,8 @@ runtime platform checks enabled. Installing with a newer Composer container must
 not select dependencies that cannot execute under the supported host interpreter.
 This tooling floor does not change a plugin's project-owned runtime metadata.
 
-The reviewed lock uses Doctrine Instantiator 1.5.0, PHPStan 2.3.1,
-phpstan-wordpress 2.0.4 and PHPUnit 9.6.38. Actual locked installation, platform
+The reviewed lock uses Doctrine Instantiator 1.5.0, PHPStan 2.3.5,
+phpstan-wordpress 2.0.4 and PHPUnit 9.6.39. Actual locked installation, platform
 checks and quality-tool execution passed on PHP 8.0, including actual Doctrine object instantiation. The full foundation gate
 also uses Composer's real solver to reject incompatible locked PHP requirements.
 
@@ -98,7 +167,7 @@ proposals for this fixture.
 
 Dependabot groups `@wordpress/*` updates per directory (`wordpress-packages`) for
 both admin starters and the fixture, because these packages are qualified as a
-set; DataViews 20, for example, requires scripts 36.1. Dependabot still opens
+set. The DataViews 22 starter is qualified with scripts 37.1. Dependabot still opens
 one grouped proposal per directory. The foundation contracts require identical
 `overrides` and shared `@wordpress/*` and React versions across all three
 manifests, so combine the three grouped proposals into one reviewed change.
@@ -138,6 +207,114 @@ Dependabot configuration. Each managed npm entry, root and admin UI, groups
 `@wordpress/*` updates (`wordpress-packages`) into one proposal per directory;
 existing children receive the group on their next foundation sync. GitLab users
 should configure their chosen dependency updater for the same child-owned paths.
+
+### Who Updates Which Dependency
+
+Projects may apply their own dependency updates, and an older foundation never
+blocks a project's validation, Plugin Check, packaging or release. GitHub raises
+Dependabot alerts for every manifest in a child repository, including files the
+child does not own. Where the file lives decides what an update does:
+
+| Path | Project update | Next foundation sync |
+| --- | --- | --- |
+| Root `composer.*` / `package*.json`, `.wp-plugin-base-admin-ui/package*.json` | Merge it; the project owns these files | Preserved |
+| Action pins in managed workflows under `.github/` | Merge it; full-SHA pin updates pass validation | Kept, unless the catalog lists the pin as an older reviewed predecessor |
+| Action pins in project-owned workflows | Merge it | Kept; reviewed predecessors are upgraded |
+| `.wp-plugin-base/**` (vendored foundation) | Not needed; close the PR | Replaced by the verified foundation release |
+| `.wp-plugin-base-quality-pack/`, `.wp-plugin-base-security-pack/` | Not needed; close the PR | Rewritten by managed sync |
+
+Managed workflows stay foundation-owned apart from their action pins. Project
+validation compares them with `.wp-plugin-base-automation.json` and accepts a
+file whose only change is a full-SHA action pin; any other edit fails. Sync never
+downgrades a pin the catalog has not reviewed; reviewed predecessors are
+upgraded to the rendered pin. From v1.10.11, generated child Dependabot
+configuration ignores no actions, so action version and security updates reach
+every workflow. A project that pins an action by hand keeps that pin until it
+changes it again. Projects still on v1.10.10 or earlier that edited a managed pin
+by hand should restore it before their first update, because the older updater
+runs its own ownership check first.
+
+Admin UI dependency updates keep the `braces` backport valid: the remediation is
+bound to each installed `braces` copy, not to the whole manifest or lock (see
+[npm security remediations](npm-security-remediations.md)). The managed admin
+build applies it after `npm ci`, and the starters seed `npm-remediations.json`.
+Projects created from earlier starters may keep their
+`packageSha256`/`lockfileSha256` fields; they are no longer compared.
+
+Advisories in the quality and security pack tool locks are reported as warnings
+in projects, because only a foundation release changes those locks. Foundation
+validation blocks on the same advisories. Advisories in project-owned
+dependencies still fail the security pack audit at the configured threshold.
+Vendored foundation files are replaced on every foundation update, so local
+edits there are lost.
+
+## October 21, 2026 Node.js 24 Default And WordPress Environment Review
+
+Following the October 2026 Node.js security releases (24.22.1 and 22.23.4),
+foundation CI, the external dependency candidate validator and the child default
+move to Node.js 24. Node.js 22 remains supported for projects. Workflows keep
+selecting a major version (`'24'`, or `'22'` for the Node.js 22 runtime job), so
+setup-node resolves the current security release.
+
+`@wordpress/env` advances from 11.16.0 to 11.17.0 (Dependabot #391), which
+resolves the block recorded in the
+[October 20 Node tooling review](#october-20-2026-node-tooling-review). That block
+was caused by npm's `engine-strict`, not by the code that runs:
+
+- `@wordpress/env` 11.17.0 itself declares Node.js >=18.12.0, like 11.16.0.
+- Its `@wp-playground/cli` ^3.1.56 dependency brings `@php-wasm/*` and
+  `@wp-playground/*` 3.1.60 packages that declare Node.js >=24.18.0 and
+  npm >=11.16.0. They implement the Playground runtime, which `wp-env` resolves
+  only when started with `--runtime=playground` and then runs as a separate
+  process. The foundation always uses the default Docker runtime.
+
+The tool's `.npmrc` now sets `engine-strict=false`, and the tool manifest keeps
+Node.js >=22.12.0 with npm >=10.2.3. `scripts/lib/check_wordpress_env_engines.cjs`
+replaces the whole-tree check: before activation, it enforces the tool manifest's
+node and npm engines and `engines.node` of every package reachable from
+`@wordpress/env` without entering `@wp-playground/cli`, following Node.js module
+resolution. A package shared with the Playground runtime is still checked. Ranges
+are evaluated as npm does (`semver.satisfies` with prereleases included), using
+`semver` 7.8.5, which the tool now declares as an exact-pinned dependency so the
+evaluator does not depend on the excluded graph. npm still runs the install script
+of the Playground-only `fs-ext-extra-prebuilt` during `npm ci`; it succeeds on
+Node.js 22.12. The lock was refreshed from the existing lock with
+`npm install --package-lock-only`. Playground
+and php-wasm move from 3.1.50 to 3.1.60, with in-range transitive refreshes such
+as `fs-ext-extra-prebuilt` 2.2.16 and `fast-xml-parser` 5.11.2.
+
+Both adapted upstream files keep their reviewed SHA-256 digests in 11.17.0, which
+still requires `simple-git` ^3.32.3 through the default import. The adaptation
+therefore accepts 11.17.0 instead of 11.16.0, and the `simple-git` 4.0.2 override
+remains. The `adm-zip`, `ajv` and `tmp` overrides are removed: without them the
+11.17.0 graph resolves the same 0.6.1, 8.18.0 and 0.2.7 releases. The `qs` 6.16.0,
+`ws` 8.21.3 and `simple-git` 4.0.2 overrides still raise versions their parents
+request. `npm audit` reports only the four moderate `sprintf-js` findings already
+recorded with a 2026-11-19 review. `@wordpress/env` 12.0.0 is a major release and
+is not part of this review.
+
+Engine declarations follow the graphs that run. The npm audit producer
+(`>=22.12.0`) and the Markdown tool bundle keep their floors. The admin starters
+and the existing-application fixture keep `^22.22.2 || ^24.15.0 || >=26.0.0`, the
+range `@wordpress/scripts` 36.1 declares. Those manifests are child-owned seeds
+(see [Existing Child Projects](#existing-child-projects)). Configuration
+validation keeps accepting any numeric `NODE_VERSION`.
+
+Qualification evidence:
+
+- On Node.js 22.12.0 with npm 10.9.0, `npm ci` of the tool succeeds. npm warns
+  only for the 21 `@php-wasm/*` and `@wp-playground/*` packages, `wp-env --version`
+  reports 11.17.0, and the engine check passes for the 151 packages the Docker
+  runtime can load, none of them from the Playground runtime.
+- `test_wordpress_env_engines.cjs` covers Docker-only, Playground-only and shared
+  packages, nested resolution, npm aliases, dependency cycles, missing required and
+  optional dependencies, the tool manifest's node and npm engines, relative roots
+  and the CLI. `check_wordpress_env_tooling.sh` passed on Node.js 22.12.0 and
+  24.22.0: high-threshold lock audit, `npm ci`, the engine check, registry
+  signatures and the real clone, fetch, branch update and tag checkout test.
+- Foundation CI runs Plugin Check and POT generation through the tool on Node.js
+  24, and the WordPress runtime matrix starts, uses, stops and cleans up actual
+  environments on WordPress 7.1.2 with Node.js 24 and WordPress 6.9 with Node.js 22.
 
 ## October 20, 2026 Advisory Review
 
@@ -209,8 +386,8 @@ unless renewed with new evidence, and is removed when upstream publishes a
 compatible fix.
 
 - [GHSA-84m7-p3x7-pcfv](https://github.com/advisories/GHSA-84m7-p3x7-pcfv)
-  (`mcp` 1.29.0, pinned by Semgrep): Semgrep 1.181.0, the latest release, still
-  pins `mcp==1.29.0`; upstream tracks the update in
+  (`mcp` 1.29.0, pinned by Semgrep): this historical exception is superseded
+  by the November 17 completion review above. Upstream tracks the update in
   [semgrep/semgrep#11992](https://github.com/semgrep/semgrep/issues/11992). The
   advisory affects stateful Streamable HTTP MCP servers. Foundation and child CI
   run Semgrep only as a CLI scanner and rule tester and never start `semgrep mcp`.
@@ -247,6 +424,16 @@ data, fixes a panic when the CLI command is constructed repeatedly and pins the
 GGUF parser. It remediates five `golang.org/x/net` advisories, four high and one
 critical (GO-2026-6612). A `cyclonedx-json` scan of the child template produced
 the same specification version and component count as 1.54.1.
+
+Cosign 3.1.4 was then reviewed and adopted. Its `cosign_checksums.txt` Sigstore
+bundle verified with the hash-pinned Cosign 3.1.3 against the
+`keyless@projectsigstore.iam.gserviceaccount.com` identity and the Google
+Accounts issuer, and the Linux amd64, macOS amd64 and macOS arm64 binary hashes
+match the signed manifest. The release builds with Go 1.27.3, adds
+`cosign bundle create-from-container`, stops `verify` panicking on a bundle
+entry without a hash and makes `verify-blob` honour non-SHA256 key hash
+algorithms. It does not change the `verify-blob --bundle` identity and issuer
+options the release and update verifiers use.
 
 The Composer pin moves to the current official `composer:2` index digest
 `sha256:af98f42dfff7c68ba8d53c2164fd9fde1087b7d449514baa38c418b1f6bc4bac`.
@@ -505,8 +692,8 @@ The external review evaluated and accepted these upstream releases:
 | Plugin Check | 2.1.0 | Explicit major review of upstream release notes; existing reviewed author and stabilization period; WordPress readiness fixtures required |
 | Plugin Update Checker | 5.7 | Same major; upstream source vendored unchanged; automatic-update metadata remains opt-in |
 | EditorConfig Checker | 3.11.3 | Same major; platform archive hashes recorded and installer validation required |
-| Syft | 1.52.0 | Exact publisher signature and signed checksum verification for every supported platform |
-| Cosign | 3.1.3 | Exact publisher identity and valid Sigstore bundle for every supported platform |
+| Syft | 1.55.0 | Exact publisher signature and signed checksum verification for every supported platform |
+| Cosign | 3.1.4 | Exact publisher identity and valid Sigstore bundle for every supported platform |
 | Composer | Official version 2 image digest | Docker registry digest recorded; compatible composer checks required |
 | WordPress environment | 11.16.0 | Actual WordPress start, CLI execution, stop and owned environment cleanup |
 | CodeQL Action | 4.38.2 | Official release commit, managed action catalog migration, workflow audit and parity |
