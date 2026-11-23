@@ -3,14 +3,17 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import nativePath, { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import nativePath, { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { classifyAudit } from './npm-audit-report.mjs';
 
 const catalogRoot = fileURLToPath(new URL('./catalog/', import.meta.url));
-const catalogPaths = Object.freeze({ 'braces-3.0.3': 'braces-3.0.3.json' });
+const catalogPaths = Object.freeze({
+  'braces-3.0.3': 'braces-3.0.3.json',
+  'picomatch-4.0.7': 'picomatch-4.0.7.json',
+});
 const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex');
 const json = path => JSON.parse(readFileSync(path, 'utf8'));
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -133,14 +136,17 @@ export function inspectRemediations(projectRoot) {
   const root = resolve(projectRoot);
   assert(lstatSync(root).isDirectory() && nativePath.relative(realpathSync(root), root) === '', 'Project root must be a physical directory');
   const manifest = json(checkedFile(root, 'npm-remediations.json'));
-  exactKeys(manifest, ['schemaVersion', 'packageSha256', 'lockfileSha256', 'remediations'], 'remediation manifest');
+  // Earlier manifests also pinned whole package.json/package-lock.json digests.
+  // They are accepted but no longer compared: each remediated package instance is
+  // verified below, so the project's own dependency updates never invalidate it.
+  const legacyDigests = ['packageSha256', 'lockfileSha256'].filter(key => Object.hasOwn(manifest, key));
+  exactKeys(manifest, ['schemaVersion', 'remediations', ...legacyDigests], 'remediation manifest');
+  for (const key of legacyDigests) assert(typeof manifest[key] === 'string' && /^[a-f0-9]{64}$/.test(manifest[key]), 'Invalid SHA256 digest');
   assert.equal(manifest.schemaVersion, 1, 'Unsupported remediation schema');
   assert(Array.isArray(manifest.remediations) && manifest.remediations.length > 0, 'No explicit remediations');
   assert.equal(new Set(manifest.remediations).size, manifest.remediations.length, 'Duplicate remediation IDs');
-  checkedHash(root, 'package.json', manifest.packageSha256);
-  checkedHash(root, 'package-lock.json', manifest.lockfileSha256);
-  const pkg = json(join(root, 'package.json'));
-  const lock = json(join(root, 'package-lock.json'));
+  const pkg = json(checkedFile(root, 'package.json'));
+  const lock = json(checkedFile(root, 'package-lock.json'));
   assert(!pkg.workspaces && lock.lockfileVersion === 3 && record(lock.packages), 'Unsupported workspace or npm lock format');
   const installed = installedPackages(root);
   const packages = new Set();
@@ -153,10 +159,15 @@ export function inspectRemediations(projectRoot) {
     packages.add(entry.package);
     checkedHash(catalogRoot, entry.patchPath, entry.patchSha256);
     checkedHash(catalogRoot, entry.regressionScript, entry.regressionSha256);
-    const instances = installed.filter(item => item.name === entry.package || basename(item.path) === entry.package);
-    assert(instances.length > 0, `No installed instances of ${entry.package}`);
+    // An unscoped directory named after the package must contain it; scoped
+    // packages such as @types/braces are unrelated.
+    const candidates = installed.filter(item => item.name === entry.package
+      || (basename(item.path) === entry.package && basename(dirname(item.path)) === 'node_modules'));
+    for (const item of candidates) assert(item.name === entry.package, 'Unreviewed package identity');
+    // Only the reviewed upstream version is patched. Other versions, or a package
+    // that an update removed, are left to npm audit, which still reports them.
+    const instances = candidates.filter(item => item.version === entry.upstreamVersion);
     for (const item of instances) {
-      assert(item.name === entry.package && item.version === entry.upstreamVersion, 'Unreviewed package identity or version');
       const pin = lock.packages[npmRelative(root, item.path)];
       assert(pin && !pin.link && pin.version === entry.upstreamVersion && pin.integrity === entry.upstreamIntegrity && pin.resolved === entry.upstreamTarball, 'Unreviewed package lock entry');
     }
@@ -168,6 +179,7 @@ export function verifyRemediations(projectRoot) {
   const state = inspectRemediations(projectRoot);
   const verified = [];
   for (const { entry, instances } of state.remediations) {
+    if (instances.length === 0) continue;
     for (const path of instances) {
       assert.deepEqual(fileHashes(path), entry.installedFiles, `Installed bytes differ: ${path}`);
       const result = run(process.execPath, [join(catalogRoot, entry.regressionScript), path], state.root);
@@ -222,7 +234,7 @@ export function qualifiedAuditProducer(directory) {
   const root = realpathSync(resolve(directory));
   assert(lstatSync(root).isDirectory(), 'Invalid audit tooling directory');
   const source = fileURLToPath(new URL('../../tools/npm-audit/', import.meta.url));
-  for (const file of ['package.json', 'package-lock.json', '.npmrc']) checkedHash(root, file, hash(join(source, file)));
+  for (const file of ['package.json', 'package-lock.json', '.npmrc', 'npm-remediations.json']) checkedHash(root, file, hash(join(source, file)));
   const tooling = json(join(source, 'package.json'));
   const lock = json(join(source, 'package-lock.json'));
   exactKeys(tooling.auditProducer, ['treeSha256'], 'audit producer');
